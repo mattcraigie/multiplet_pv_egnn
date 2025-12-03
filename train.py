@@ -135,10 +135,10 @@ def run_experiment(
     if verbose:
         print(f"Using device: {device}")
     
-    # Create datasets
-    train_dataset = ParityViolationDataset(n_train, alpha=alpha, seed=seed)
-    val_dataset = ParityViolationDataset(n_val, alpha=alpha, seed=seed + 1)
-    test_dataset = ParityViolationDataset(n_test, alpha=alpha, seed=seed + 2)
+    # Create datasets (use well-separated seeds for independence)
+    train_dataset = ParityViolationDataset(n_train, alpha=alpha, seed=seed * 1000)
+    val_dataset = ParityViolationDataset(n_val, alpha=alpha, seed=seed * 1000 + 1)
+    test_dataset = ParityViolationDataset(n_test, alpha=alpha, seed=seed * 1000 + 2)
     
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -217,10 +217,10 @@ def run_control_experiment(
         print(f"Using device: {device}")
         print("Running CONTROL experiment (no parity violation)")
     
-    # Create parity-symmetric datasets
-    train_dataset = ParitySymmetricDataset(n_train, seed=seed)
-    val_dataset = ParitySymmetricDataset(n_val, seed=seed + 1)
-    test_dataset = ParitySymmetricDataset(n_test, seed=seed + 2)
+    # Create parity-symmetric datasets (use well-separated seeds for independence)
+    train_dataset = ParitySymmetricDataset(n_train, seed=seed * 1000)
+    val_dataset = ParitySymmetricDataset(n_val, seed=seed * 1000 + 1)
+    test_dataset = ParitySymmetricDataset(n_test, seed=seed * 1000 + 2)
     
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -267,6 +267,7 @@ def run_control_experiment(
 def run_statistical_test(
     n_seeds: int = 5,
     n_train: int = 4000,
+    n_val: int = 1000,
     n_test: int = 1000,
     alpha: float = 0.5,
     n_epochs: int = 20,
@@ -278,6 +279,7 @@ def run_statistical_test(
     Args:
         n_seeds: Number of random seeds to try
         n_train: Training samples per experiment
+        n_val: Validation samples per experiment
         n_test: Test samples per experiment
         alpha: Parity violation parameter
         n_epochs: Epochs per experiment
@@ -298,6 +300,7 @@ def run_statistical_test(
             print(f"\n--- Seed {seed} ---")
         results = run_experiment(
             n_train=n_train,
+            n_val=n_val,
             n_test=n_test,
             alpha=alpha,
             n_epochs=n_epochs,
