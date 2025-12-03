@@ -159,7 +159,9 @@ def generate_angles_parity_violating_3d(
     The sign of the angle difference Δφ depends on the sign of delta_z:
     - If delta_z > 0: Δφ = φ₂ - φ₁ ≈ +2α
     - If delta_z < 0: Δφ = φ₂ - φ₁ ≈ -2α
-    - If delta_z = 0: treated as delta_z > 0
+    - If delta_z = 0 exactly: treated as positive (same as delta_z > 0), 
+      though this is rare in practice since delta_z is sampled from a 
+      continuous distribution.
     
     This creates a true 3D parity-violating signal that correlates with 
     line-of-sight ordering.
@@ -178,7 +180,7 @@ def generate_angles_parity_violating_3d(
     # Sample base orientation uniformly
     phi0 = rng.uniform(0, 2 * np.pi)
     
-    # Assign angles based on sign of delta_z
+    # Assign angles based on sign of delta_z (delta_z == 0 treated as positive)
     if delta_z >= 0:
         # Δφ = phi2 - phi1 ≈ +2α
         phi1 = (phi0 - alpha) % (2 * np.pi)
@@ -232,6 +234,19 @@ def compute_node_features(angles: np.ndarray) -> np.ndarray:
     return np.stack([cos_phi, sin_phi], axis=-1)
 
 
+def compute_delta_z(positions: np.ndarray) -> float:
+    """
+    Compute the line-of-sight separation (z2 - z1) from 3D positions.
+    
+    Args:
+        positions: Array of shape (2, 3) with 3D point positions
+        
+    Returns:
+        Signed line-of-sight separation delta_z = z2 - z1
+    """
+    return positions[1, 2] - positions[0, 2]
+
+
 def compute_edge_features(positions: np.ndarray, angles: np.ndarray) -> dict:
     """
     Compute edge features for a 2-point graph.
@@ -251,9 +266,9 @@ def compute_edge_features(positions: np.ndarray, angles: np.ndarray) -> dict:
     # Compute pairwise 3D distance (works for any dimension)
     distance_3d = np.linalg.norm(positions[1] - positions[0])
     
-    # Compute delta_z (line-of-sight separation)
+    # Compute delta_z (line-of-sight separation) using helper for 3D positions
     if positions.shape[1] >= 3:
-        delta_z = positions[1, 2] - positions[0, 2]
+        delta_z = compute_delta_z(positions)
     else:
         delta_z = 0.0
     
@@ -333,8 +348,8 @@ class ParityViolationDataset(Dataset):
                 self.min_separation, self.max_separation,
                 self.dz_max, self.rng
             )
-            # Compute delta_z first (z2 - z1)
-            delta_z = positions[1, 2] - positions[0, 2]
+            # Compute delta_z for angle generation
+            delta_z = compute_delta_z(positions)
             
             # Generate angles with 3D parity-violating rule
             angles = generate_angles_parity_violating_3d(self.alpha, delta_z, self.rng)
@@ -355,8 +370,8 @@ class ParityViolationDataset(Dataset):
                 self.min_separation, self.max_separation,
                 self.dz_max, self.rng
             )
-            # Compute delta_z first (z2 - z1)
-            delta_z = positions[1, 2] - positions[0, 2]
+            # Compute delta_z for angle generation
+            delta_z = compute_delta_z(positions)
             
             # Generate angles with 3D parity-violating rule, then symmetrize
             angles = generate_angles_parity_violating_3d(self.alpha, delta_z, self.rng)
