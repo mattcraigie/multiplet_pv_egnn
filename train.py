@@ -1,5 +1,5 @@
 """
-Training module for the parity violation EGNN classifier.
+Training module for the 3D parity violation EGNN classifier.
 
 Implements:
 - Training loop with BCE loss
@@ -36,13 +36,14 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
     
     for batch in dataloader:
         node_features = batch['node_features'].to(device)
-        edge_distance = batch['edge_distance'].to(device)
+        edge_distance_3d = batch['edge_distance_3d'].to(device)
+        edge_delta_z = batch['edge_delta_z'].to(device)
         edge_sin_delta_phi = batch['edge_sin_delta_phi'].to(device)
         labels = batch['label'].to(device)
         
         optimizer.zero_grad()
         
-        logits = model(node_features, edge_distance, edge_sin_delta_phi)
+        logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_delta_phi)
         loss = criterion(logits, labels)
         
         loss.backward()
@@ -75,11 +76,12 @@ def evaluate(model, dataloader, criterion, device):
     with torch.no_grad():
         for batch in dataloader:
             node_features = batch['node_features'].to(device)
-            edge_distance = batch['edge_distance'].to(device)
+            edge_distance_3d = batch['edge_distance_3d'].to(device)
+            edge_delta_z = batch['edge_delta_z'].to(device)
             edge_sin_delta_phi = batch['edge_sin_delta_phi'].to(device)
             labels = batch['label'].to(device)
             
-            logits = model(node_features, edge_distance, edge_sin_delta_phi)
+            logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_delta_phi)
             loss = criterion(logits, labels)
             
             total_loss += loss.item() * len(labels)
@@ -145,10 +147,10 @@ def run_experiment(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model
+    # Create model (edge_input_dim=3 for distance_3d, delta_z, sin_delta_phi)
     model = ParityViolationEGNN(
         node_input_dim=2,
-        edge_input_dim=2,
+        edge_input_dim=3,
         hidden_dim=hidden_dim,
         n_layers=n_layers
     ).to(device)
@@ -227,10 +229,10 @@ def run_control_experiment(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model
+    # Create model (edge_input_dim=3 for distance_3d, delta_z, sin_delta_phi)
     model = ParityViolationEGNN(
         node_input_dim=2,
-        edge_input_dim=2,
+        edge_input_dim=3,
         hidden_dim=hidden_dim,
         n_layers=n_layers
     ).to(device)
@@ -332,11 +334,11 @@ def run_statistical_test(
 
 if __name__ == '__main__':
     print("="*60)
-    print("2D Parity-Violating EGNN Experiment")
+    print("3D Parity-Violating EGNN Experiment")
     print("="*60)
     
     # Run main experiment with parity violation
-    print("\n[1] Main Experiment (with parity violation, α=0.5)")
+    print("\n[1] Main Experiment (with 3D parity violation, α=0.5)")
     print("-"*60)
     results = run_experiment(alpha=0.5, verbose=True)
     
@@ -359,7 +361,7 @@ if __name__ == '__main__':
     print(f"Statistical test mean accuracy: {stats['mean_accuracy']:.4f} ± {stats['std_accuracy']:.4f}")
     
     if results['test_accuracy'] > 0.55 and control_results['test_accuracy'] < 0.55:
-        print("\n✓ VALIDATION PASSED: Model correctly detects parity violation")
+        print("\n✓ VALIDATION PASSED: Model correctly detects 3D parity violation")
         print("  - Detects parity when present (α > 0)")
         print("  - Returns ~0.5 accuracy for parity-symmetric control")
     else:
