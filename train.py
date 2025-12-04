@@ -108,6 +108,56 @@ def evaluate(model, dataloader, criterion, device):
     }
 
 
+class EarlyStopping:
+    """
+    Early stopping helper to track validation loss and stop training when loss converges.
+    """
+    
+    def __init__(self, patience: int = None, min_delta: float = 1e-4):
+        """
+        Initialize early stopping tracker.
+        
+        Args:
+            patience: Number of epochs to wait for improvement. If None, disabled.
+            min_delta: Minimum change in validation loss to qualify as improvement.
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_loss = float('inf')
+        self.epochs_without_improvement = 0
+        self.best_model_state = None
+        self.enabled = patience is not None
+    
+    def __call__(self, val_loss: float, model) -> bool:
+        """
+        Check if training should stop.
+        
+        Args:
+            val_loss: Current validation loss
+            model: Model to save state from
+            
+        Returns:
+            True if training should stop, False otherwise
+        """
+        if not self.enabled:
+            return False
+        
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.epochs_without_improvement = 0
+            # Save best model state
+            self.best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
+            return False
+        else:
+            self.epochs_without_improvement += 1
+            return self.epochs_without_improvement >= self.patience
+    
+    def restore_best_model(self, model):
+        """Restore the best model state."""
+        if self.best_model_state is not None:
+            model.load_state_dict(self.best_model_state)
+
+
 def run_experiment(
     n_train: int = 4000,
     n_val: int = 1000,
@@ -184,11 +234,12 @@ def run_experiment(
     val_losses = []
     val_accuracies = []
     
-    # Early stopping variables
-    best_val_loss = float('inf')
+    # Early stopping
+    early_stopping = EarlyStopping(
+        patience=early_stopping_patience,
+        min_delta=early_stopping_min_delta
+    )
     best_val_acc = 0.0
-    epochs_without_improvement = 0
-    best_model_state = None
     
     # Training loop
     for epoch in range(n_epochs):
@@ -202,24 +253,13 @@ def run_experiment(
         if val_metrics['accuracy'] > best_val_acc:
             best_val_acc = val_metrics['accuracy']
         
-        # Early stopping check based on validation loss
-        if early_stopping_patience is not None:
-            if val_metrics['loss'] < best_val_loss - early_stopping_min_delta:
-                best_val_loss = val_metrics['loss']
-                epochs_without_improvement = 0
-                # Save best model state
-                best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
-            else:
-                epochs_without_improvement += 1
-            
-            if epochs_without_improvement >= early_stopping_patience:
-                if verbose:
-                    print(f"Early stopping at epoch {epoch + 1} "
-                          f"(no improvement for {early_stopping_patience} epochs)")
-                # Restore best model
-                if best_model_state is not None:
-                    model.load_state_dict(best_model_state)
-                break
+        # Early stopping check
+        if early_stopping(val_metrics['loss'], model):
+            if verbose:
+                print(f"Early stopping at epoch {epoch + 1} "
+                      f"(no improvement for {early_stopping_patience} epochs)")
+            early_stopping.restore_best_model(model)
+            break
         
         if verbose:
             print(f"Epoch {epoch + 1:3d}: "
@@ -614,10 +654,11 @@ def run_bootstrap_statistical_test(
     val_losses = []
     val_accuracies = []
     
-    # Early stopping variables
-    best_val_loss = float('inf')
-    epochs_without_improvement = 0
-    best_model_state = None
+    # Early stopping
+    early_stopping = EarlyStopping(
+        patience=early_stopping_patience,
+        min_delta=early_stopping_min_delta
+    )
     
     for epoch in range(n_epochs):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
@@ -627,24 +668,13 @@ def run_bootstrap_statistical_test(
         val_losses.append(val_metrics['loss'])
         val_accuracies.append(val_metrics['accuracy'])
         
-        # Early stopping check based on validation loss
-        if early_stopping_patience is not None:
-            if val_metrics['loss'] < best_val_loss - early_stopping_min_delta:
-                best_val_loss = val_metrics['loss']
-                epochs_without_improvement = 0
-                # Save best model state
-                best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
-            else:
-                epochs_without_improvement += 1
-            
-            if epochs_without_improvement >= early_stopping_patience:
-                if verbose:
-                    print(f"Early stopping at epoch {epoch + 1} "
-                          f"(no improvement for {early_stopping_patience} epochs)")
-                # Restore best model
-                if best_model_state is not None:
-                    model.load_state_dict(best_model_state)
-                break
+        # Early stopping check
+        if early_stopping(val_metrics['loss'], model):
+            if verbose:
+                print(f"Early stopping at epoch {epoch + 1} "
+                      f"(no improvement for {early_stopping_patience} epochs)")
+            early_stopping.restore_best_model(model)
+            break
         
         if verbose:
             print(f"Epoch {epoch + 1:3d}: "

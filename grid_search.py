@@ -18,6 +18,12 @@ from typing import List, Optional
 
 import numpy as np
 import yaml
+
+
+# Heatmap color thresholds for text visibility
+HEATMAP_TEXT_DARK_THRESHOLD_LOW = 50   # Below this, use white text
+HEATMAP_TEXT_DARK_THRESHOLD_HIGH = 80  # Above this, use white text
+ACCURACY_HEATMAP_TEXT_THRESHOLD = 70   # Threshold for accuracy heatmap
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
@@ -278,7 +284,7 @@ def plot_detection_significance_heatmap(
         for j in range(len(f_pv_values)):
             value = matrix[i, j]
             if not np.isnan(value):
-                text_color = 'white' if value < 50 or value > 80 else 'black'
+                text_color = 'white' if value < HEATMAP_TEXT_DARK_THRESHOLD_LOW or value > HEATMAP_TEXT_DARK_THRESHOLD_HIGH else 'black'
                 ax.text(j, i, f'{value:.1f}%', ha='center', va='center',
                        color=text_color, fontsize=9, fontweight='bold')
     
@@ -407,7 +413,7 @@ def plot_accuracy_heatmap(
         for j in range(len(f_pv_values)):
             value = matrix[i, j]
             if not np.isnan(value):
-                text_color = 'white' if value < 70 else 'black'
+                text_color = 'white' if value < ACCURACY_HEATMAP_TEXT_THRESHOLD else 'black'
                 ax.text(j, i, f'{value:.1f}%', ha='center', va='center',
                        color=text_color, fontsize=9, fontweight='bold')
     
