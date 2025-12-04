@@ -108,6 +108,56 @@ def evaluate(model, dataloader, criterion, device):
     }
 
 
+class EarlyStopping:
+    """
+    Early stopping helper to track validation loss and stop training when loss converges.
+    """
+    
+    def __init__(self, patience: int = None, min_delta: float = 1e-4):
+        """
+        Initialize early stopping tracker.
+        
+        Args:
+            patience: Number of epochs to wait for improvement. If None, disabled.
+            min_delta: Minimum change in validation loss to qualify as improvement.
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_loss = float('inf')
+        self.epochs_without_improvement = 0
+        self.best_model_state = None
+        self.enabled = patience is not None
+    
+    def __call__(self, val_loss: float, model) -> bool:
+        """
+        Check if training should stop.
+        
+        Args:
+            val_loss: Current validation loss
+            model: Model to save state from
+            
+        Returns:
+            True if training should stop, False otherwise
+        """
+        if not self.enabled:
+            return False
+        
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.epochs_without_improvement = 0
+            # Save best model state
+            self.best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
+            return False
+        else:
+            self.epochs_without_improvement += 1
+            return self.epochs_without_improvement >= self.patience
+    
+    def restore_best_model(self, model):
+        """Restore the best model state."""
+        if self.best_model_state is not None:
+            model.load_state_dict(self.best_model_state)
+
+
 def run_experiment(
     n_train: int = 4000,
     n_val: int = 1000,
@@ -120,7 +170,9 @@ def run_experiment(
     n_epochs: int = 20,
     lr: float = 1e-3,
     seed: int = 42,
-    verbose: bool = True
+    verbose: bool = True,
+    early_stopping_patience: int = None,
+    early_stopping_min_delta: float = 1e-4
 ):
     """
     Run a complete training experiment.
@@ -140,6 +192,9 @@ def run_experiment(
         lr: Learning rate
         seed: Random seed
         verbose: Whether to print progress
+        early_stopping_patience: Number of epochs to wait for improvement before stopping.
+                                 If None, early stopping is disabled.
+        early_stopping_min_delta: Minimum change in validation loss to qualify as improvement.
         
     Returns:
         Dictionary with final results and loss history
@@ -179,8 +234,14 @@ def run_experiment(
     val_losses = []
     val_accuracies = []
     
-    # Training loop
+    # Early stopping
+    early_stopping = EarlyStopping(
+        patience=early_stopping_patience,
+        min_delta=early_stopping_min_delta
+    )
     best_val_acc = 0.0
+    
+    # Training loop
     for epoch in range(n_epochs):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
         val_metrics = evaluate(model, val_loader, criterion, device)
@@ -191,6 +252,14 @@ def run_experiment(
         
         if val_metrics['accuracy'] > best_val_acc:
             best_val_acc = val_metrics['accuracy']
+        
+        # Early stopping check
+        if early_stopping(val_metrics['loss'], model):
+            if verbose:
+                print(f"Early stopping at epoch {epoch + 1} "
+                      f"(no improvement for {early_stopping_patience} epochs)")
+            early_stopping.restore_best_model(model)
+            break
         
         if verbose:
             print(f"Epoch {epoch + 1:3d}: "
@@ -211,7 +280,8 @@ def run_experiment(
         'best_val_accuracy': best_val_acc,
         'train_losses': train_losses,
         'val_losses': val_losses,
-        'val_accuracies': val_accuracies
+        'val_accuracies': val_accuracies,
+        'epochs_trained': len(train_losses)
     }
 
 
@@ -517,7 +587,9 @@ def run_bootstrap_statistical_test(
     seed: int = 42,
     n_bootstrap: int = 1000,
     confidence_level: float = 0.95,
-    verbose: bool = True
+    verbose: bool = True,
+    early_stopping_patience: int = None,
+    early_stopping_min_delta: float = 1e-4
 ):
     """
     Train a model and perform bootstrap statistical test for parity violation.
@@ -540,6 +612,9 @@ def run_bootstrap_statistical_test(
         n_bootstrap: Number of bootstrap resamples
         confidence_level: Confidence level for interval
         verbose: Whether to print progress
+        early_stopping_patience: Number of epochs to wait for improvement before stopping.
+                                 If None, early stopping is disabled.
+        early_stopping_min_delta: Minimum change in validation loss to qualify as improvement.
         
     Returns:
         Dictionary with training results and bootstrap test results
@@ -574,10 +649,16 @@ def run_bootstrap_statistical_test(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
     
-    # Training loop
+    # Training loop with early stopping
     train_losses = []
     val_losses = []
     val_accuracies = []
+    
+    # Early stopping
+    early_stopping = EarlyStopping(
+        patience=early_stopping_patience,
+        min_delta=early_stopping_min_delta
+    )
     
     for epoch in range(n_epochs):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
@@ -586,6 +667,14 @@ def run_bootstrap_statistical_test(
         train_losses.append(train_loss)
         val_losses.append(val_metrics['loss'])
         val_accuracies.append(val_metrics['accuracy'])
+        
+        # Early stopping check
+        if early_stopping(val_metrics['loss'], model):
+            if verbose:
+                print(f"Early stopping at epoch {epoch + 1} "
+                      f"(no improvement for {early_stopping_patience} epochs)")
+            early_stopping.restore_best_model(model)
+            break
         
         if verbose:
             print(f"Epoch {epoch + 1:3d}: "
@@ -619,7 +708,8 @@ def run_bootstrap_statistical_test(
         'ci_upper': bootstrap_results['ci_upper'],
         'p_value': bootstrap_results['p_value'],
         'parity_violation_detected': bootstrap_results['parity_violation_detected'],
-        'detection_confidence': bootstrap_results['detection_confidence']
+        'detection_confidence': bootstrap_results['detection_confidence'],
+        'epochs_trained': len(train_losses)
     }
 
 
@@ -660,6 +750,13 @@ def parse_args():
                         help='Learning rate')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility')
+    
+    # Early stopping parameters
+    parser.add_argument('--early-stopping-patience', type=int, default=None,
+                        help='Number of epochs to wait for improvement before stopping. '
+                             'If not provided, early stopping is disabled.')
+    parser.add_argument('--early-stopping-min-delta', type=float, default=1e-4,
+                        help='Minimum change in validation loss to qualify as improvement.')
     
     # Statistical test parameters
     parser.add_argument('--n-seeds', type=int, default=5,
@@ -720,7 +817,9 @@ if __name__ == '__main__':
             n_epochs=args.n_epochs,
             lr=args.lr,
             seed=args.seed,
-            verbose=verbose
+            verbose=verbose,
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_delta=args.early_stopping_min_delta
         )
     
     if args.mode in ['control', 'full']:
@@ -773,7 +872,9 @@ if __name__ == '__main__':
             seed=args.seed,
             n_bootstrap=args.n_bootstrap,
             confidence_level=args.confidence_level,
-            verbose=verbose
+            verbose=verbose,
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_delta=args.early_stopping_min_delta
         )
     
     # Final summary
