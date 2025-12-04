@@ -1,10 +1,14 @@
 """
-Data generation module for 3D Parity-Violating EGNN experiment.
+Data generation module for 3D Parity-Violating EGNN experiment with spin-2 objects.
 
 This module generates:
 1. Isotropic 3D point pairs with parity-violating angle correlations
    that depend on the line-of-sight (z) coordinate
 2. Symmetrized (parity-balanced) control datasets
+
+Spin-2 objects have headless orientations (like line segments) where angle φ
+and angle φ+π represent the same orientation. The natural representation uses
+cos(2φ), sin(2φ) which have period π, and angles are sampled from [0, π).
 """
 
 import numpy as np
@@ -116,12 +120,13 @@ def generate_point_pair_3d(
 
 
 def generate_angles_parity_violating(
-    alpha: float = 0.5,
+    alpha: float = 0.3,
     rng: np.random.Generator = None
 ) -> np.ndarray:
     """
-    Generate parity-violating angle correlations for a 2-point graph.
+    Generate parity-violating angle correlations for a 2-point graph (spin-2).
     
+    For spin-2 objects, angles are in [0, π) and represent headless orientations.
     The angles have a fixed signed relative offset:
     - φ₁ = φ₀ + α
     - φ₂ = φ₀ - α
@@ -129,33 +134,34 @@ def generate_angles_parity_violating(
     This creates a parity-violating pattern (Δφ = -2α always has same sign).
     
     Args:
-        alpha: The angle offset parameter (default 0.5 rad)
+        alpha: The angle offset parameter (default 0.3 rad, appropriate for spin-2)
         rng: Random number generator
         
     Returns:
-        Array of shape (2,) with the two angles
+        Array of shape (2,) with the two angles in [0, π)
     """
     if rng is None:
         rng = np.random.default_rng()
     
-    # Sample base orientation uniformly
-    phi0 = rng.uniform(0, 2 * np.pi)
+    # Sample base orientation uniformly in [0, π) for spin-2
+    phi0 = rng.uniform(0, np.pi)
     
-    # Assign angles with fixed offset
-    phi1 = (phi0 + alpha) % (2 * np.pi)
-    phi2 = (phi0 - alpha) % (2 * np.pi)
+    # Assign angles with fixed offset (mod π for spin-2)
+    phi1 = (phi0 + alpha) % np.pi
+    phi2 = (phi0 - alpha) % np.pi
     
     return np.array([phi1, phi2])
 
 
 def generate_angles_parity_violating_3d(
-    alpha: float = 0.5,
+    alpha: float = 0.3,
     delta_z: float = 0.0,
     rng: np.random.Generator = None
 ) -> np.ndarray:
     """
-    Generate 3D parity-violating angle correlations for a 2-point graph.
+    Generate 3D parity-violating angle correlations for a 2-point graph (spin-2).
     
+    For spin-2 objects, angles are in [0, π) and represent headless orientations.
     The sign of the angle difference Δφ depends on the sign of delta_z:
     - If delta_z > 0: Δφ = φ₂ - φ₁ ≈ +2α
     - If delta_z < 0: Δφ = φ₂ - φ₁ ≈ -2α
@@ -167,71 +173,74 @@ def generate_angles_parity_violating_3d(
     line-of-sight ordering.
     
     Args:
-        alpha: The angle offset parameter (default 0.5 rad)
+        alpha: The angle offset parameter (default 0.3 rad, appropriate for spin-2)
         delta_z: The line-of-sight separation (z2 - z1)
         rng: Random number generator
         
     Returns:
-        Array of shape (2,) with the two angles
+        Array of shape (2,) with the two angles in [0, π)
     """
     if rng is None:
         rng = np.random.default_rng()
     
-    # Sample base orientation uniformly
-    phi0 = rng.uniform(0, 2 * np.pi)
+    # Sample base orientation uniformly in [0, π) for spin-2
+    phi0 = rng.uniform(0, np.pi)
     
     # Assign angles based on sign of delta_z (delta_z == 0 treated as positive)
+    # Using mod π for spin-2
     if delta_z >= 0:
         # Δφ = phi2 - phi1 ≈ +2α
-        phi1 = (phi0 - alpha) % (2 * np.pi)
-        phi2 = (phi0 + alpha) % (2 * np.pi)
+        phi1 = (phi0 - alpha) % np.pi
+        phi2 = (phi0 + alpha) % np.pi
     else:
         # Δφ = phi2 - phi1 ≈ -2α
-        phi1 = (phi0 + alpha) % (2 * np.pi)
-        phi2 = (phi0 - alpha) % (2 * np.pi)
+        phi1 = (phi0 + alpha) % np.pi
+        phi2 = (phi0 - alpha) % np.pi
     
     return np.array([phi1, phi2])
 
 
 def symmetrize_angles(angles: np.ndarray, rng: np.random.Generator = None) -> np.ndarray:
     """
-    Apply parity symmetrization to angles.
+    Apply parity symmetrization to angles (spin-2).
     
-    With 50% probability, flip all angles: φ → -φ (mod 2π)
-    This removes the parity-violating signature while preserving other statistics.
+    For spin-2 objects, parity flips the orientation: φ → -φ (mod π).
+    With 50% probability, flip all angles to remove the parity-violating signature.
     
     Args:
-        angles: Array of angles to symmetrize
+        angles: Array of angles to symmetrize (in [0, π))
         rng: Random number generator
         
     Returns:
-        Symmetrized angles
+        Symmetrized angles (in [0, π))
     """
     if rng is None:
         rng = np.random.default_rng()
     
     if rng.random() < 0.5:
-        # Flip angles: φ → -φ (mod 2π)
-        return (-angles) % (2 * np.pi)
+        # Flip angles: φ → -φ (mod π) for spin-2
+        return (-angles) % np.pi
     else:
         return angles.copy()
 
 
 def compute_node_features(angles: np.ndarray) -> np.ndarray:
     """
-    Compute node features from angles.
+    Compute node features from angles (spin-2).
     
-    Node features: (cos φ, sin φ)
+    For spin-2 objects, use doubled angles to get period-π features:
+    Node features: (cos(2φ), sin(2φ))
     
     Args:
-        angles: Array of shape (n_nodes,) with angles
+        angles: Array of shape (n_nodes,) with angles in [0, π)
         
     Returns:
         Array of shape (n_nodes, 2) with node features
     """
-    cos_phi = np.cos(angles)
-    sin_phi = np.sin(angles)
-    return np.stack([cos_phi, sin_phi], axis=-1)
+    # Use 2φ for spin-2 representation (period π)
+    cos_2phi = np.cos(2 * angles)
+    sin_2phi = np.sin(2 * angles)
+    return np.stack([cos_2phi, sin_2phi], axis=-1)
 
 
 def compute_delta_z(positions: np.ndarray) -> float:
@@ -249,16 +258,16 @@ def compute_delta_z(positions: np.ndarray) -> float:
 
 def compute_edge_features(positions: np.ndarray, angles: np.ndarray) -> dict:
     """
-    Compute edge features for a 2-point graph.
+    Compute edge features for a 2-point graph (spin-2).
     
     Edge features:
     - distance_3d: 3D pairwise distance (works for 2D positions as well)
     - delta_z: signed line-of-sight separation (z2 - z1), 0.0 for 2D positions
-    - sin_delta_phi: sin(φ₂ - φ₁), the parity-odd feature
+    - sin_2delta_phi: sin(2(φ₂ - φ₁)), the parity-odd feature for spin-2
     
     Args:
         positions: Array of shape (2, 2) or (2, 3) with point positions
-        angles: Array of shape (2,) with angles
+        angles: Array of shape (2,) with angles in [0, π)
         
     Returns:
         Dictionary with edge features
@@ -272,33 +281,33 @@ def compute_edge_features(positions: np.ndarray, angles: np.ndarray) -> dict:
     else:
         delta_z = 0.0
     
-    # Compute sin(Δφ) = sin(φ₂ - φ₁)
+    # Compute sin(2Δφ) = sin(2(φ₂ - φ₁)) for spin-2
     delta_phi = angles[1] - angles[0]
-    sin_delta_phi = np.sin(delta_phi)
+    sin_2delta_phi = np.sin(2 * delta_phi)
     
     return {
         'distance_3d': distance_3d,
         'delta_z': delta_z,
-        'sin_delta_phi': sin_delta_phi
+        'sin_2delta_phi': sin_2delta_phi
     }
 
 
 class ParityViolationDataset(Dataset):
     """
-    PyTorch Dataset for 3D parity violation detection.
+    PyTorch Dataset for 3D parity violation detection with spin-2 objects.
     
     Each sample contains:
-    - node_features: (n_nodes, 2) tensor with (cos φ, sin φ)
+    - node_features: (n_nodes, 2) tensor with (cos(2φ), sin(2φ)) for spin-2
     - edge_distance_3d: scalar 3D distance between nodes
     - edge_delta_z: signed line-of-sight separation (z2 - z1)
-    - edge_sin_delta_phi: sin(Δφ) parity-odd feature
+    - edge_sin_2delta_phi: sin(2Δφ) parity-odd feature for spin-2
     - label: 1 for real (parity-violating), 0 for symmetrized
     """
     
     def __init__(
         self,
         n_samples: int,
-        alpha: float = 0.5,
+        alpha: float = 0.3,
         box_size: float = 10.0,
         box_size_z: float = None,
         min_separation: float = 1.0,
@@ -311,7 +320,7 @@ class ParityViolationDataset(Dataset):
         
         Args:
             n_samples: Total number of samples (half real, half symmetrized)
-            alpha: Parity violation angle offset
+            alpha: Parity violation angle offset (default 0.3 rad for spin-2)
             box_size: Box size for position sampling in x, y
             box_size_z: Box size for position sampling in z (defaults to box_size)
             min_separation: Minimum point separation in x-y plane
@@ -336,9 +345,11 @@ class ParityViolationDataset(Dataset):
         n_each = self.n_samples // 2
         
         self.node_features = []
+        self.positions = []  # Store positions for visualization
+        self.angles = []  # Store angles for visualization
         self.edge_distances_3d = []
         self.edge_delta_zs = []
-        self.edge_sin_delta_phis = []
+        self.edge_sin_2delta_phis = []
         self.labels = []
         
         # Generate real (parity-violating) samples
@@ -358,9 +369,11 @@ class ParityViolationDataset(Dataset):
             edge_feat = compute_edge_features(positions, angles)
             
             self.node_features.append(node_feat)
+            self.positions.append(positions)
+            self.angles.append(angles)
             self.edge_distances_3d.append(edge_feat['distance_3d'])
             self.edge_delta_zs.append(edge_feat['delta_z'])
-            self.edge_sin_delta_phis.append(edge_feat['sin_delta_phi'])
+            self.edge_sin_2delta_phis.append(edge_feat['sin_2delta_phi'])
             self.labels.append(1)  # Real sample
         
         # Generate symmetrized samples
@@ -381,10 +394,16 @@ class ParityViolationDataset(Dataset):
             edge_feat = compute_edge_features(positions, angles)
             
             self.node_features.append(node_feat)
+            self.positions.append(positions)
+            self.angles.append(angles)
             self.edge_distances_3d.append(edge_feat['distance_3d'])
             self.edge_delta_zs.append(edge_feat['delta_z'])
-            self.edge_sin_delta_phis.append(edge_feat['sin_delta_phi'])
+            self.edge_sin_2delta_phis.append(edge_feat['sin_2delta_phi'])
             self.labels.append(0)  # Symmetrized sample
+        
+        # Store numpy arrays for visualization
+        self.positions_np = np.array(self.positions)
+        self.angles_np = np.array(self.angles)
         
         # Convert to tensors
         self.node_features = torch.tensor(
@@ -396,8 +415,8 @@ class ParityViolationDataset(Dataset):
         self.edge_delta_zs = torch.tensor(
             np.array(self.edge_delta_zs), dtype=torch.float32
         )
-        self.edge_sin_delta_phis = torch.tensor(
-            np.array(self.edge_sin_delta_phis), dtype=torch.float32
+        self.edge_sin_2delta_phis = torch.tensor(
+            np.array(self.edge_sin_2delta_phis), dtype=torch.float32
         )
         self.labels = torch.tensor(self.labels, dtype=torch.float32)
     
@@ -409,7 +428,7 @@ class ParityViolationDataset(Dataset):
             'node_features': self.node_features[idx],
             'edge_distance_3d': self.edge_distances_3d[idx],
             'edge_delta_z': self.edge_delta_zs[idx],
-            'edge_sin_delta_phi': self.edge_sin_delta_phis[idx],
+            'edge_sin_2delta_phi': self.edge_sin_2delta_phis[idx],
             'label': self.labels[idx]
         }
 
@@ -418,7 +437,7 @@ class ParitySymmetricDataset(Dataset):
     """
     Control dataset with completely random angles (no parity violation).
     
-    Uses 3D positions but generates completely random angles independent
+    Uses 3D positions but generates completely random angles (spin-2) independent
     of positions and delta_z. Used to verify that the classifier returns
     ~0.5 accuracy when there's no parity-violating signal.
     """
@@ -456,13 +475,15 @@ class ParitySymmetricDataset(Dataset):
         self._generate_data()
     
     def _generate_data(self):
-        """Generate all samples with random angles."""
+        """Generate all samples with random angles (spin-2)."""
         n_each = self.n_samples // 2
         
         self.node_features = []
+        self.positions = []  # Store positions for visualization
+        self.angles = []  # Store angles for visualization
         self.edge_distances_3d = []
         self.edge_delta_zs = []
-        self.edge_sin_delta_phis = []
+        self.edge_sin_2delta_phis = []
         self.labels = []
         
         # Generate samples with random labels and random angles
@@ -473,17 +494,23 @@ class ParitySymmetricDataset(Dataset):
                     self.min_separation, self.max_separation,
                     self.dz_max, self.rng
                 )
-                # Completely random angles (no parity violation)
-                angles = self.rng.uniform(0, 2 * np.pi, size=2)
+                # Completely random angles in [0, π) for spin-2 (no parity violation)
+                angles = self.rng.uniform(0, np.pi, size=2)
                 
                 node_feat = compute_node_features(angles)
                 edge_feat = compute_edge_features(positions, angles)
                 
                 self.node_features.append(node_feat)
+                self.positions.append(positions)
+                self.angles.append(angles)
                 self.edge_distances_3d.append(edge_feat['distance_3d'])
                 self.edge_delta_zs.append(edge_feat['delta_z'])
-                self.edge_sin_delta_phis.append(edge_feat['sin_delta_phi'])
+                self.edge_sin_2delta_phis.append(edge_feat['sin_2delta_phi'])
                 self.labels.append(label)
+        
+        # Store numpy arrays for visualization
+        self.positions_np = np.array(self.positions)
+        self.angles_np = np.array(self.angles)
         
         # Convert to tensors
         self.node_features = torch.tensor(
@@ -495,8 +522,8 @@ class ParitySymmetricDataset(Dataset):
         self.edge_delta_zs = torch.tensor(
             np.array(self.edge_delta_zs), dtype=torch.float32
         )
-        self.edge_sin_delta_phis = torch.tensor(
-            np.array(self.edge_sin_delta_phis), dtype=torch.float32
+        self.edge_sin_2delta_phis = torch.tensor(
+            np.array(self.edge_sin_2delta_phis), dtype=torch.float32
         )
         self.labels = torch.tensor(self.labels, dtype=torch.float32)
     
@@ -508,6 +535,6 @@ class ParitySymmetricDataset(Dataset):
             'node_features': self.node_features[idx],
             'edge_distance_3d': self.edge_distances_3d[idx],
             'edge_delta_z': self.edge_delta_zs[idx],
-            'edge_sin_delta_phi': self.edge_sin_delta_phis[idx],
+            'edge_sin_2delta_phi': self.edge_sin_2delta_phis[idx],
             'label': self.labels[idx]
         }

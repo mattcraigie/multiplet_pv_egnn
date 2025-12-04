@@ -104,3 +104,6 @@ venv.bak/
 .vscode/
 *.swp
 *.swo
+
+# Visualizations output
+visualizations/
