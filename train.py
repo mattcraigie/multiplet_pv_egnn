@@ -1,5 +1,5 @@
 """
-Training module for the 3D parity violation EGNN classifier.
+Training module for the 3D parity violation EGNN classifier with spin-2 objects.
 
 Implements:
 - Training loop with BCE loss
@@ -38,12 +38,12 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
         node_features = batch['node_features'].to(device)
         edge_distance_3d = batch['edge_distance_3d'].to(device)
         edge_delta_z = batch['edge_delta_z'].to(device)
-        edge_sin_delta_phi = batch['edge_sin_delta_phi'].to(device)
+        edge_sin_2delta_phi = batch['edge_sin_2delta_phi'].to(device)
         labels = batch['label'].to(device)
         
         optimizer.zero_grad()
         
-        logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_delta_phi)
+        logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
         loss = criterion(logits, labels)
         
         loss.backward()
@@ -78,10 +78,10 @@ def evaluate(model, dataloader, criterion, device):
             node_features = batch['node_features'].to(device)
             edge_distance_3d = batch['edge_distance_3d'].to(device)
             edge_delta_z = batch['edge_delta_z'].to(device)
-            edge_sin_delta_phi = batch['edge_sin_delta_phi'].to(device)
+            edge_sin_2delta_phi = batch['edge_sin_2delta_phi'].to(device)
             labels = batch['label'].to(device)
             
-            logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_delta_phi)
+            logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
             loss = criterion(logits, labels)
             
             total_loss += loss.item() * len(labels)
@@ -101,7 +101,7 @@ def run_experiment(
     n_train: int = 4000,
     n_val: int = 1000,
     n_test: int = 1000,
-    alpha: float = 0.5,
+    alpha: float = 0.3,
     hidden_dim: int = 16,
     n_layers: int = 2,
     batch_size: int = 64,
@@ -117,7 +117,7 @@ def run_experiment(
         n_train: Number of training samples
         n_val: Number of validation samples
         n_test: Number of test samples
-        alpha: Parity violation parameter
+        alpha: Parity violation parameter (default 0.3 for spin-2)
         hidden_dim: Hidden dimension for the model
         n_layers: Number of message passing layers
         batch_size: Batch size for training
@@ -127,7 +127,7 @@ def run_experiment(
         verbose: Whether to print progress
         
     Returns:
-        Dictionary with final results
+        Dictionary with final results and loss history
     """
     # Set seeds for reproducibility
     torch.manual_seed(seed)
@@ -147,7 +147,7 @@ def run_experiment(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model (edge_input_dim=3 for distance_3d, delta_z, sin_delta_phi)
+    # Create model (edge_input_dim=3 for distance_3d, delta_z, sin_2delta_phi)
     model = ParityViolationEGNN(
         node_input_dim=2,
         edge_input_dim=3,
@@ -159,11 +159,20 @@ def run_experiment(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
     
+    # Loss history for visualization
+    train_losses = []
+    val_losses = []
+    val_accuracies = []
+    
     # Training loop
     best_val_acc = 0.0
     for epoch in range(n_epochs):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
         val_metrics = evaluate(model, val_loader, criterion, device)
+        
+        train_losses.append(train_loss)
+        val_losses.append(val_metrics['loss'])
+        val_accuracies.append(val_metrics['accuracy'])
         
         if val_metrics['accuracy'] > best_val_acc:
             best_val_acc = val_metrics['accuracy']
@@ -184,7 +193,10 @@ def run_experiment(
     return {
         'test_loss': test_metrics['loss'],
         'test_accuracy': test_metrics['accuracy'],
-        'best_val_accuracy': best_val_acc
+        'best_val_accuracy': best_val_acc,
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'val_accuracies': val_accuracies
     }
 
 
@@ -209,7 +221,7 @@ def run_control_experiment(
         Same as run_experiment except no alpha parameter
         
     Returns:
-        Dictionary with final results
+        Dictionary with final results and loss history
     """
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -229,7 +241,7 @@ def run_control_experiment(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model (edge_input_dim=3 for distance_3d, delta_z, sin_delta_phi)
+    # Create model (edge_input_dim=3 for distance_3d, delta_z, sin_2delta_phi)
     model = ParityViolationEGNN(
         node_input_dim=2,
         edge_input_dim=3,
@@ -241,10 +253,19 @@ def run_control_experiment(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
     
+    # Loss history for visualization
+    train_losses = []
+    val_losses = []
+    val_accuracies = []
+    
     # Training loop
     for epoch in range(n_epochs):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
         val_metrics = evaluate(model, val_loader, criterion, device)
+        
+        train_losses.append(train_loss)
+        val_losses.append(val_metrics['loss'])
+        val_accuracies.append(val_metrics['accuracy'])
         
         if verbose:
             print(f"Epoch {epoch + 1:3d}: "
@@ -262,7 +283,10 @@ def run_control_experiment(
     
     return {
         'test_loss': test_metrics['loss'],
-        'test_accuracy': test_metrics['accuracy']
+        'test_accuracy': test_metrics['accuracy'],
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'val_accuracies': val_accuracies
     }
 
 
@@ -271,7 +295,7 @@ def run_statistical_test(
     n_train: int = 4000,
     n_val: int = 1000,
     n_test: int = 1000,
-    alpha: float = 0.5,
+    alpha: float = 0.3,
     n_epochs: int = 20,
     verbose: bool = True
 ):
@@ -334,13 +358,13 @@ def run_statistical_test(
 
 if __name__ == '__main__':
     print("="*60)
-    print("3D Parity-Violating EGNN Experiment")
+    print("3D Parity-Violating EGNN Experiment (Spin-2)")
     print("="*60)
     
     # Run main experiment with parity violation
-    print("\n[1] Main Experiment (with 3D parity violation, α=0.5)")
+    print("\n[1] Main Experiment (with 3D parity violation, α=0.3)")
     print("-"*60)
-    results = run_experiment(alpha=0.5, verbose=True)
+    results = run_experiment(alpha=0.3, verbose=True)
     
     # Run control experiment without parity violation
     print("\n[2] Control Experiment (no parity violation)")

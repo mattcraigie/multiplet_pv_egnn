@@ -1,10 +1,10 @@
 """
-EGNN-like message-passing classifier for 3D parity violation detection.
+EGNN-like message-passing classifier for 3D parity violation detection with spin-2 objects.
 
 This implements a minimal EGNN-like architecture:
 - No coordinate updates (distances give rotation invariance)
-- Node embedding from angle features (cos φ, sin φ)
-- Edge embedding from 3D distance, delta_z, and sin(Δφ)
+- Node embedding from spin-2 angle features (cos(2φ), sin(2φ))
+- Edge embedding from 3D distance, delta_z, and sin(2Δφ) for spin-2
 - Message passing with summation aggregation
 - Mean pooling → MLP → single logit
 """
@@ -94,11 +94,11 @@ class MessagePassingLayer(nn.Module):
 
 class ParityViolationEGNN(nn.Module):
     """
-    EGNN-like classifier for 3D parity violation detection.
+    EGNN-like classifier for 3D parity violation detection with spin-2 objects.
     
     Architecture:
-    1. Node embedding from angle features
-    2. Edge embedding from 3D distance, delta_z, and sin(Δφ)
+    1. Node embedding from spin-2 angle features (cos(2φ), sin(2φ))
+    2. Edge embedding from 3D distance, delta_z, and sin(2Δφ) for spin-2
     3. Message passing layers
     4. Mean pooling over nodes
     5. MLP classifier producing single logit
@@ -115,8 +115,8 @@ class ParityViolationEGNN(nn.Module):
         Initialize the EGNN classifier.
         
         Args:
-            node_input_dim: Input dimension for node features (default 2 for cos/sin)
-            edge_input_dim: Input dimension for edge features (default 3 for distance_3d, delta_z, sin_delta_phi)
+            node_input_dim: Input dimension for node features (default 2 for cos(2φ)/sin(2φ))
+            edge_input_dim: Input dimension for edge features (default 3 for distance_3d, delta_z, sin_2delta_phi)
             hidden_dim: Hidden dimension throughout the network
             n_layers: Number of message passing layers
         """
@@ -151,15 +151,15 @@ class ParityViolationEGNN(nn.Module):
             nn.Linear(hidden_dim, 1)
         )
     
-    def forward(self, node_features, edge_distance_3d, edge_delta_z, edge_sin_delta_phi):
+    def forward(self, node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi):
         """
         Forward pass through the EGNN classifier.
         
         Args:
-            node_features: (batch, 2, 2) tensor with (cos φ, sin φ) for each node
+            node_features: (batch, 2, 2) tensor with (cos(2φ), sin(2φ)) for each node
             edge_distance_3d: (batch,) tensor with 3D pairwise distances
             edge_delta_z: (batch,) tensor with signed line-of-sight separations
-            edge_sin_delta_phi: (batch,) tensor with sin(Δφ) values
+            edge_sin_2delta_phi: (batch,) tensor with sin(2Δφ) values for spin-2
             
         Returns:
             logits: (batch,) tensor with classification logits
@@ -172,8 +172,8 @@ class ParityViolationEGNN(nn.Module):
         node_embed = self.node_embed(node_flat)
         node_embed = node_embed.view(batch_size, 2, self.hidden_dim)
         
-        # Embed edges (3 features: distance_3d, delta_z, sin_delta_phi)
-        edge_input = torch.stack([edge_distance_3d, edge_delta_z, edge_sin_delta_phi], dim=-1)
+        # Embed edges (3 features: distance_3d, delta_z, sin_2delta_phi)
+        edge_input = torch.stack([edge_distance_3d, edge_delta_z, edge_sin_2delta_phi], dim=-1)
         edge_embed = self.edge_embed(edge_input)  # (batch, hidden_dim)
         
         # Message passing
