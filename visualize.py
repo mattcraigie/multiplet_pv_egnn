@@ -161,11 +161,15 @@ def plot_pv_dataset(
     # Generate dataset
     dataset = ParityViolationDataset(n_samples=n_samples, alpha=alpha, seed=seed)
     
-    # Select only real PV samples (label=1, first half)
+    # The dataset generates real PV samples (label=1) first, then symmetrized (label=0).
+    # Select only real PV samples from the first half.
     n_pv = n_samples // 2
     positions = dataset.positions_np[:n_pv]
     angles = dataset.angles_np[:n_pv]
     labels = dataset.labels[:n_pv].numpy()
+    
+    # Verify we have the correct samples (all should be label=1)
+    assert (labels == 1).all(), "Expected first half to be real PV samples (label=1)"
     
     return plot_spin2_orientations(
         positions=positions,
@@ -204,7 +208,8 @@ def plot_null_dataset(
     # Generate dataset
     dataset = ParitySymmetricDataset(n_samples=n_samples, seed=seed)
     
-    # Use first half of samples
+    # For the symmetric dataset, all samples have random angles (no PV structure).
+    # Use first half of samples for visualization consistency.
     n_half = n_samples // 2
     positions = dataset.positions_np[:n_half]
     angles = dataset.angles_np[:n_half]

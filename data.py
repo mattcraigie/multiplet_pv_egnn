@@ -124,7 +124,11 @@ def generate_angles_parity_violating(
     rng: np.random.Generator = None
 ) -> np.ndarray:
     """
-    Generate parity-violating angle correlations for a 2-point graph (spin-2).
+    Generate parity-violating angle correlations for a 2-point graph (spin-2, 2D version).
+    
+    This is the simpler 2D version that creates a fixed-sign parity violation.
+    For the 3D version that correlates with line-of-sight separation, see
+    generate_angles_parity_violating_3d().
     
     For spin-2 objects, angles are in [0, π) and represent headless orientations.
     The angles have a fixed signed relative offset:
