@@ -113,6 +113,7 @@ def run_experiment(
     n_val: int = 1000,
     n_test: int = 1000,
     alpha: float = 0.3,
+    f_pv: float = 1.0,
     hidden_dim: int = 16,
     n_layers: int = 2,
     batch_size: int = 64,
@@ -129,6 +130,9 @@ def run_experiment(
         n_val: Number of validation samples
         n_test: Number of test samples
         alpha: Parity violation parameter (default 0.3 for spin-2)
+        f_pv: Fraction of pairs that are parity-violating (0.0 to 1.0).
+              f_pv=1.0 means all pairs are PV (original behavior).
+              f_pv=0.0 means all pairs have random angles (no signal).
         hidden_dim: Hidden dimension for the model
         n_layers: Number of message passing layers
         batch_size: Batch size for training
@@ -149,9 +153,9 @@ def run_experiment(
         print(f"Using device: {device}")
     
     # Create datasets (use well-separated seeds for independence)
-    train_dataset = ParityViolationDataset(n_train, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
-    val_dataset = ParityViolationDataset(n_val, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
-    test_dataset = ParityViolationDataset(n_test, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
+    train_dataset = ParityViolationDataset(n_train, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
+    val_dataset = ParityViolationDataset(n_val, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
+    test_dataset = ParityViolationDataset(n_test, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
     
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -307,6 +311,7 @@ def run_statistical_test(
     n_val: int = 1000,
     n_test: int = 1000,
     alpha: float = 0.3,
+    f_pv: float = 1.0,
     n_epochs: int = 20,
     verbose: bool = True
 ):
@@ -319,6 +324,7 @@ def run_statistical_test(
         n_val: Validation samples per experiment
         n_test: Test samples per experiment
         alpha: Parity violation parameter
+        f_pv: Fraction of pairs that are parity-violating (0.0 to 1.0)
         n_epochs: Epochs per experiment
         verbose: Print progress
         
@@ -340,6 +346,7 @@ def run_statistical_test(
             n_val=n_val,
             n_test=n_test,
             alpha=alpha,
+            f_pv=f_pv,
             n_epochs=n_epochs,
             seed=seed,
             verbose=verbose
@@ -351,7 +358,7 @@ def run_statistical_test(
     
     if verbose:
         print(f"\n{'='*60}")
-        print(f"Statistical Test Results (alpha={alpha}):")
+        print(f"Statistical Test Results (alpha={alpha}, f_pv={f_pv}):")
         print(f"  Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
         print(f"  Individual: {[f'{a:.4f}' for a in accuracies]}")
         if mean_acc > 0.55:
@@ -501,6 +508,7 @@ def run_bootstrap_statistical_test(
     n_val: int = 1000,
     n_test: int = 1000,
     alpha: float = 0.3,
+    f_pv: float = 1.0,
     hidden_dim: int = 16,
     n_layers: int = 2,
     batch_size: int = 64,
@@ -522,6 +530,7 @@ def run_bootstrap_statistical_test(
         n_val: Number of validation samples
         n_test: Number of test samples
         alpha: Parity violation parameter
+        f_pv: Fraction of pairs that are parity-violating (0.0 to 1.0)
         hidden_dim: Hidden dimension for the model
         n_layers: Number of message passing layers
         batch_size: Batch size for training
@@ -544,9 +553,9 @@ def run_bootstrap_statistical_test(
         print(f"Using device: {device}")
     
     # Create datasets (use well-separated seeds for independence)
-    train_dataset = ParityViolationDataset(n_train, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
-    val_dataset = ParityViolationDataset(n_val, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
-    test_dataset = ParityViolationDataset(n_test, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
+    train_dataset = ParityViolationDataset(n_train, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
+    val_dataset = ParityViolationDataset(n_val, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
+    test_dataset = ParityViolationDataset(n_test, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
     
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -630,6 +639,11 @@ def parse_args():
                         help='Number of test samples')
     parser.add_argument('--alpha', type=float, default=0.3,
                         help='Parity violation parameter (angle offset)')
+    parser.add_argument('--f-pv', type=float, default=1.0,
+                        help='Fraction of pairs that are parity-violating (0.0 to 1.0). '
+                             'f_pv=1.0 means all pairs are PV (original behavior). '
+                             'f_pv=0.0 means all pairs have random angles (no signal). '
+                             'Expected accuracy scales as 0.5 + f_pv/4.')
     
     # Model parameters
     parser.add_argument('--hidden-dim', type=int, default=16,
@@ -681,7 +695,7 @@ if __name__ == '__main__':
     if verbose:
         print(f"\nConfiguration:")
         print(f"  n_train={args.n_train}, n_val={args.n_val}, n_test={args.n_test}")
-        print(f"  alpha={args.alpha}, hidden_dim={args.hidden_dim}, n_layers={args.n_layers}")
+        print(f"  alpha={args.alpha}, f_pv={args.f_pv}, hidden_dim={args.hidden_dim}, n_layers={args.n_layers}")
         print(f"  batch_size={args.batch_size}, n_epochs={args.n_epochs}, lr={args.lr}")
         print(f"  seed={args.seed}, mode={args.mode}")
     
@@ -692,13 +706,14 @@ if __name__ == '__main__':
     
     if args.mode in ['main', 'full']:
         # Run main experiment with parity violation
-        print(f"\n[1] Main Experiment (with 3D parity violation, α={args.alpha})")
+        print(f"\n[1] Main Experiment (with 3D parity violation, α={args.alpha}, f_pv={args.f_pv})")
         print("-"*60)
         results = run_experiment(
             n_train=args.n_train,
             n_val=args.n_val,
             n_test=args.n_test,
             alpha=args.alpha,
+            f_pv=args.f_pv,
             hidden_dim=args.hidden_dim,
             n_layers=args.n_layers,
             batch_size=args.batch_size,
@@ -735,6 +750,7 @@ if __name__ == '__main__':
             n_val=args.n_val,
             n_test=args.n_test,
             alpha=args.alpha,
+            f_pv=args.f_pv,
             n_epochs=args.n_epochs,
             verbose=verbose
         )
@@ -748,6 +764,7 @@ if __name__ == '__main__':
             n_val=args.n_val,
             n_test=args.n_test,
             alpha=args.alpha,
+            f_pv=args.f_pv,
             hidden_dim=args.hidden_dim,
             n_layers=args.n_layers,
             batch_size=args.batch_size,
