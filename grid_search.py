@@ -266,7 +266,7 @@ def find_boundary_curve(
     at which parity violation can be detected. Uses iterative refinement
     to localize the transition between detection and no detection.
     
-    This answers the question: "What parity strength can my model detect 
+    This answers the question: "What parity strength can my model detect
     with an X sized dataset of points?"
     
     Args:
@@ -283,7 +283,7 @@ def find_boundary_curve(
     f_pv_min, f_pv_max = f_pv_range
     
     xs = np.array(num_train_val_values)
-    ys_boundary = np.full_like(xs, fill_value=np.nan, dtype=float)
+    ys_boundary = np.full(len(xs), np.nan, dtype=float)
     
     verbose = config.get('verbose', True)
     
@@ -351,11 +351,11 @@ def run_boundary_search(config: dict) -> dict:
     Returns:
         Dictionary with boundary search results
     """
-    num_train_val_list = config['num_train_val']
+    num_train_val_list = config.get('num_train_val', DEFAULT_CONFIG['num_train_val'])
     f_pv_range = (config.get('f_pv_min', 0.01), config.get('f_pv_max', 1.0))
     max_depth = config.get('boundary_max_depth', 8)
     n_splits = config.get('boundary_n_splits', 4)
-    verbose = config['verbose']
+    verbose = config.get('verbose', True)
     
     if verbose:
         print("\n" + "="*60)
@@ -841,7 +841,7 @@ if __name__ == '__main__':
         # Print summary
         print("\nBoundary Summary (minimum f_pv for detection):")
         for n, f in zip(boundary_results['num_train_val'], boundary_results['f_pv_boundary']):
-            if np.isnan(f):
+            if f is None or (isinstance(f, float) and np.isnan(f)):
                 print(f"  n_train_val={n:>7,}: boundary not found")
             else:
                 print(f"  n_train_val={n:>7,}: f_pv >= {f:.4f}")
