@@ -1,13 +1,25 @@
 """
 Grid search module for comparing data amount to detection capability.
 
-This module implements a grid search over:
-- Number of train/val samples (with 0.8/0.2 split)
-- Parity violation fraction (f_pv)
+This module implements:
+1. Grid search over number of train/val samples and f_pv values
+2. Boundary search to find detection thresholds
+
+Grid Search:
+- Evaluates all combinations of num_train_val and f_pv values
+- Produces detection significance and binary heatmaps
+
+Boundary Search (--boundary-search flag):
+- Finds the minimum f_pv required for detection at each dataset size
+- Uses iterative binary search to localize the detection boundary
+- Answers: "What parity strength can my model detect with X samples?"
+
+Default dataset sizes: 10^2, 10^3, 10^4, 10^5 (100, 1000, 10000, 100000)
 
 Results include:
-- Detection significance heatmaps
-- Binary detection threshold heatmaps
+- Detection significance heatmaps (grid search)
+- Binary detection threshold heatmaps (grid search)
+- Detection boundary curve (boundary search)
 """
 
 import argparse
@@ -33,7 +45,8 @@ from train import run_bootstrap_statistical_test
 # Default grid search configuration
 DEFAULT_CONFIG = {
     # Grid parameters
-    'num_train_val': [1000, 10000, 100000, 1000000],
+    # Default values are powers of 10: 10^2, 10^3, 10^4, 10^5
+    'num_train_val': [100, 1000, 10000, 100000],
     'f_pv_values': [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0],
     'train_val_split': 0.8,  # 0.8 train, 0.2 val
     
@@ -189,6 +202,291 @@ def run_grid_search(config: dict) -> dict:
                 results['test_accuracy_matrix'][i, j] = np.nan
     
     return results
+
+
+def detection_function(
+    n_train_val: int,
+    f_pv: float,
+    config: dict
+) -> int:
+    """
+    Test whether parity violation is detected for given parameters.
+    
+    This function trains a model and returns 1 if parity violation
+    is detected (ci_lower > 0.5), 0 otherwise.
+    
+    Args:
+        n_train_val: Number of training + validation samples
+        f_pv: Parity violation fraction
+        config: Configuration dictionary with training parameters
+        
+    Returns:
+        1 if parity violation detected, 0 otherwise
+    """
+    train_split = config['train_val_split']
+    n_train = int(n_train_val * train_split)
+    n_val = n_train_val - n_train
+    
+    try:
+        run_results = run_bootstrap_statistical_test(
+            n_train=n_train,
+            n_val=n_val,
+            n_test=config['n_test'],
+            alpha=config['alpha'],
+            f_pv=f_pv,
+            hidden_dim=config['hidden_dim'],
+            n_layers=config['n_layers'],
+            batch_size=config['batch_size'],
+            n_epochs=config['n_epochs'],
+            lr=config['lr'],
+            seed=config['seed'],
+            n_bootstrap=config['n_bootstrap'],
+            confidence_level=config['confidence_level'],
+            verbose=config.get('verbose', False),
+            early_stopping_patience=config['early_stopping_patience'],
+            early_stopping_min_delta=config['early_stopping_min_delta']
+        )
+        return 1 if run_results['parity_violation_detected'] else 0
+    except Exception as e:
+        print(f"Error at n_train_val={n_train_val}, f_pv={f_pv}: {e}")
+        return 0
+
+
+def find_boundary_curve(
+    num_train_val_values: list,
+    f_pv_range: tuple,
+    config: dict,
+    max_depth: int = 8,
+    n_splits: int = 4,
+) -> tuple:
+    """
+    Find the detection boundary curve using binary search.
+    
+    For each dataset size (x = num_train_val), finds the minimum f_pv (y)
+    at which parity violation can be detected. Uses iterative refinement
+    to localize the transition between detection and no detection.
+    
+    This answers the question: "What parity strength can my model detect
+    with an X sized dataset of points?"
+    
+    Args:
+        num_train_val_values: List of dataset sizes to test
+        f_pv_range: Tuple (f_pv_min, f_pv_max) defining the search range
+        config: Configuration dictionary with training parameters
+        max_depth: Maximum depth of binary search refinement
+        n_splits: Number of splits per refinement level
+        
+    Returns:
+        Tuple of (num_train_val_values, f_pv_boundary) arrays where
+        f_pv_boundary[i] is the estimated boundary f_pv for num_train_val_values[i]
+    """
+    f_pv_min, f_pv_max = f_pv_range
+    
+    xs = np.array(num_train_val_values)
+    ys_boundary = np.full(len(xs), np.nan, dtype=float)
+    
+    verbose = config.get('verbose', True)
+    
+    for idx, n_train_val in enumerate(xs):
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"Finding boundary for n_train_val={n_train_val}")
+            print(f"{'='*60}")
+        
+        lo, hi = f_pv_min, f_pv_max
+        found_interval = None
+        
+        for depth in range(max_depth):
+            # Sample f_pv values in current interval
+            f_pv_samples = np.linspace(lo, hi, n_splits + 1)
+            
+            if verbose:
+                print(f"  Depth {depth}: searching f_pv in [{lo:.4f}, {hi:.4f}]")
+            
+            # Evaluate detection at each sample point
+            detection_vals = []
+            for f_pv in f_pv_samples:
+                detected = detection_function(n_train_val, f_pv, config)
+                detection_vals.append(detected)
+                if verbose:
+                    status = "DETECTED" if detected else "not detected"
+                    print(f"    f_pv={f_pv:.4f}: {status}")
+            
+            # Find transition point (where detection changes from 0 to 1)
+            transition_index = None
+            for i in range(n_splits):
+                if detection_vals[i] != detection_vals[i + 1]:
+                    transition_index = i
+                    break
+            
+            if transition_index is None:
+                # No transition found in this interval
+                found_interval = None
+                break
+            
+            # Narrow the search interval
+            lo = f_pv_samples[transition_index]
+            hi = f_pv_samples[transition_index + 1]
+            found_interval = (lo, hi)
+        
+        if found_interval is not None:
+            lo, hi = found_interval
+            ys_boundary[idx] = 0.5 * (lo + hi)
+            if verbose:
+                print(f"  Boundary found: f_pv ≈ {ys_boundary[idx]:.4f}")
+        else:
+            if verbose:
+                print(f"  No boundary found in range [{f_pv_min}, {f_pv_max}]")
+    
+    return xs, ys_boundary
+
+
+def run_boundary_search(config: dict) -> dict:
+    """
+    Run boundary search to find detection thresholds for each dataset size.
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        Dictionary with boundary search results
+    """
+    num_train_val_list = config.get('num_train_val', DEFAULT_CONFIG['num_train_val'])
+    f_pv_range = (config.get('f_pv_min', 0.01), config.get('f_pv_max', 1.0))
+    max_depth = config.get('boundary_max_depth', 8)
+    n_splits = config.get('boundary_n_splits', 4)
+    verbose = config.get('verbose', True)
+    
+    if verbose:
+        print("\n" + "="*60)
+        print("Boundary Search: Finding Detection Thresholds")
+        print("="*60)
+        print(f"\nConfiguration:")
+        print(f"  num_train_val: {num_train_val_list}")
+        print(f"  f_pv_range: {f_pv_range}")
+        print(f"  max_depth: {max_depth}")
+        print(f"  n_splits: {n_splits}")
+    
+    xs, ys_boundary = find_boundary_curve(
+        num_train_val_values=num_train_val_list,
+        f_pv_range=f_pv_range,
+        config=config,
+        max_depth=max_depth,
+        n_splits=n_splits
+    )
+    
+    results = {
+        'config': config,
+        'num_train_val': xs.tolist(),
+        'f_pv_boundary': ys_boundary.tolist(),
+        'f_pv_range': f_pv_range,
+        'max_depth': max_depth,
+        'n_splits': n_splits,
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    return results
+
+
+def save_boundary_results(results: dict, output_dir: str):
+    """
+    Save boundary search results to JSON file.
+    
+    Args:
+        results: Results dictionary from boundary search
+        output_dir: Output directory
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    output_path = os.path.join(output_dir, 'boundary_results.json')
+    with open(output_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    print(f"Boundary results saved to {output_path}")
+
+
+def load_boundary_results(results_path: str) -> dict:
+    """
+    Load boundary results from a JSON file.
+    
+    Args:
+        results_path: Path to the boundary_results.json file
+        
+    Returns:
+        Boundary results dictionary
+    """
+    with open(results_path, 'r') as f:
+        results = json.load(f)
+    
+    return results
+
+
+def plot_boundary_curve(
+    results: dict,
+    output_dir: str,
+    figsize: tuple = (10, 8)
+):
+    """
+    Plot the detection boundary curve.
+    
+    Shows the minimum f_pv required for detection as a function of dataset size.
+    
+    Args:
+        results: Boundary search results dictionary
+        output_dir: Output directory for saving the plot
+        figsize: Figure size
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Get data
+    num_train_val = np.array(results['num_train_val'])
+    f_pv_boundary = np.array(results['f_pv_boundary'])
+    
+    # Filter out NaN values for plotting
+    valid_mask = ~np.isnan(f_pv_boundary)
+    x_valid = num_train_val[valid_mask]
+    y_valid = f_pv_boundary[valid_mask]
+    
+    # Plot boundary curve
+    if len(x_valid) > 0:
+        ax.plot(x_valid, y_valid, 'b-o', linewidth=2, markersize=8, label='Detection Boundary')
+        
+        # Fill regions
+        ax.fill_between(x_valid, y_valid, 1.0, alpha=0.3, color='green', label='Detected Region')
+        ax.fill_between(x_valid, 0, y_valid, alpha=0.3, color='red', label='Not Detected Region')
+    
+    # Mark points where boundary was not found
+    invalid_mask = np.isnan(f_pv_boundary)
+    if np.any(invalid_mask):
+        ax.scatter(num_train_val[invalid_mask], 
+                  np.full(np.sum(invalid_mask), 0.5),
+                  marker='x', s=100, c='gray', label='Boundary not found')
+    
+    # Set log scale for x-axis
+    ax.set_xscale('log')
+    
+    # Set labels
+    ax.set_xlabel('Number of Train+Val Samples', fontsize=12)
+    ax.set_ylabel('f_pv (Parity Violation Fraction)', fontsize=12)
+    ax.set_title('Detection Boundary: Minimum f_pv for Detection\n'
+                 '(What parity strength can my model detect with X samples?)', fontsize=14)
+    
+    # Set y-axis limits
+    ax.set_ylim([0, 1.05])
+    
+    # Add grid
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='upper right', fontsize=10)
+    
+    plt.tight_layout()
+    
+    # Save
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, 'boundary_curve.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"Saved boundary curve to {output_path}")
+    
+    plt.close()
 
 
 def save_results(results: dict, output_dir: str):
@@ -457,6 +755,10 @@ def parse_args():
                         help='Skip grid search and only generate plots from existing results.json')
     parser.add_argument('--generate-default-config', type=str, default=None,
                         help='Generate default config file at the specified path and exit')
+    parser.add_argument('--boundary-search', action='store_true',
+                        help='Run boundary search to find detection thresholds instead of grid search')
+    parser.add_argument('--plot-boundary', type=str, default=None,
+                        help='Skip search and only plot boundary from existing boundary_results.json')
     parser.add_argument('--quiet', action='store_true',
                         help='Suppress verbose output')
     
@@ -472,12 +774,20 @@ if __name__ == '__main__':
         print(f"Default configuration saved to {args.generate_default_config}")
         exit(0)
     
-    # Plot-only mode
+    # Plot-only mode for grid search results
     if args.plot_only:
         print(f"Loading results from {args.plot_only}")
         results = load_results(args.plot_only)
         output_dir = os.path.dirname(args.plot_only)
         generate_plots(results, output_dir)
+        exit(0)
+    
+    # Plot-only mode for boundary results
+    if args.plot_boundary:
+        print(f"Loading boundary results from {args.plot_boundary}")
+        boundary_results = load_boundary_results(args.plot_boundary)
+        output_dir = os.path.dirname(args.plot_boundary)
+        plot_boundary_curve(boundary_results, output_dir)
         exit(0)
     
     # Load configuration
@@ -493,6 +803,52 @@ if __name__ == '__main__':
     
     output_dir = config['output_dir']
     
+    # Boundary search mode
+    if args.boundary_search:
+        print("="*60)
+        print("Boundary Search: Finding Detection Thresholds")
+        print("="*60)
+        print(f"\nConfiguration:")
+        print(f"  num_train_val: {config['num_train_val']}")
+        print(f"  f_pv_range: ({config.get('f_pv_min', 0.01)}, {config.get('f_pv_max', 1.0)})")
+        print(f"  train_val_split: {config['train_val_split']}")
+        print(f"  n_test: {config['n_test']}")
+        print(f"  output_dir: {output_dir}")
+        
+        # Save config
+        os.makedirs(output_dir, exist_ok=True)
+        save_config(config, os.path.join(output_dir, 'config.yaml'))
+        
+        # Run boundary search
+        print("\nStarting boundary search...")
+        boundary_results = run_boundary_search(config)
+        
+        # Save results
+        save_boundary_results(boundary_results, output_dir)
+        
+        # Generate plot
+        print("\nGenerating boundary curve plot...")
+        plot_boundary_curve(boundary_results, output_dir)
+        
+        print("\n" + "="*60)
+        print("Boundary Search Complete!")
+        print("="*60)
+        print(f"\nResults saved to: {output_dir}")
+        print(f"  - config.yaml")
+        print(f"  - boundary_results.json")
+        print(f"  - boundary_curve.png")
+        
+        # Print summary
+        print("\nBoundary Summary (minimum f_pv for detection):")
+        for n, f in zip(boundary_results['num_train_val'], boundary_results['f_pv_boundary']):
+            if f is None or (isinstance(f, float) and np.isnan(f)):
+                print(f"  n_train_val={n:>7,}: boundary not found")
+            else:
+                print(f"  n_train_val={n:>7,}: f_pv >= {f:.4f}")
+        
+        exit(0)
+    
+    # Default: Run grid search
     print("="*60)
     print("Grid Search: Data Amount vs Detection Capability")
     print("="*60)

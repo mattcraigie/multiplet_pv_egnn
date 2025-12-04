@@ -6,12 +6,12 @@
 
 # Grid parameters
 # num_train_val: Total samples for training + validation
-# The default values are powers of 10: 10^3, 10^4, 10^5, 10^6
+# The default values are powers of 10: 10^2, 10^3, 10^4, 10^5
 num_train_val:
+  - 100
   - 1000
   - 10000
   - 100000
-  - 1000000
 
 # f_pv_values: Fraction of pairs that are parity-violating
 # Range from 0.01 (1%) to 1.0 (100%)
@@ -48,6 +48,13 @@ early_stopping_min_delta: 0.0001  # Minimum improvement threshold
 n_bootstrap: 1000       # Number of bootstrap resamples
 confidence_level: 0.95  # 95% confidence level
 seed: 42               # Random seed for reproducibility
+
+# Boundary search parameters (used with --boundary-search flag)
+# f_pv_min and f_pv_max define the search range for the boundary finder
+f_pv_min: 0.01           # Minimum f_pv to search
+f_pv_max: 1.0            # Maximum f_pv to search
+boundary_max_depth: 8    # Maximum depth of binary search refinement
+boundary_n_splits: 4     # Number of splits per refinement level
 
 # Output settings
 output_dir: grid_search_results
