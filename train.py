@@ -18,6 +18,15 @@ from data import ParityViolationDataset, ParitySymmetricDataset
 from model import ParityViolationEGNN
 
 
+# Seed generation constants for dataset independence
+# Each dataset (train, val, test) uses a different offset from base seed
+SEED_MULTIPLIER = 1000  # Multiplier to separate seed ranges
+SEED_OFFSET_TRAIN = 0   # Offset for training dataset
+SEED_OFFSET_VAL = 1     # Offset for validation dataset  
+SEED_OFFSET_TEST = 2    # Offset for test dataset
+SEED_OFFSET_BOOTSTRAP = 3  # Offset for bootstrap resampling
+
+
 def train_epoch(model, dataloader, optimizer, criterion, device):
     """
     Train for one epoch.
@@ -140,9 +149,9 @@ def run_experiment(
         print(f"Using device: {device}")
     
     # Create datasets (use well-separated seeds for independence)
-    train_dataset = ParityViolationDataset(n_train, alpha=alpha, seed=seed * 1000)
-    val_dataset = ParityViolationDataset(n_val, alpha=alpha, seed=seed * 1000 + 1)
-    test_dataset = ParityViolationDataset(n_test, alpha=alpha, seed=seed * 1000 + 2)
+    train_dataset = ParityViolationDataset(n_train, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
+    val_dataset = ParityViolationDataset(n_val, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
+    test_dataset = ParityViolationDataset(n_test, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
     
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -234,9 +243,9 @@ def run_control_experiment(
         print("Running CONTROL experiment (no parity violation)")
     
     # Create parity-symmetric datasets (use well-separated seeds for independence)
-    train_dataset = ParitySymmetricDataset(n_train, seed=seed * 1000)
-    val_dataset = ParitySymmetricDataset(n_val, seed=seed * 1000 + 1)
-    test_dataset = ParitySymmetricDataset(n_test, seed=seed * 1000 + 2)
+    train_dataset = ParitySymmetricDataset(n_train, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
+    val_dataset = ParitySymmetricDataset(n_val, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
+    test_dataset = ParitySymmetricDataset(n_test, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
     
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -365,6 +374,7 @@ def bootstrap_confidence_test(
     n_bootstrap: int = 1000,
     confidence_level: float = 0.95,
     null_accuracy: float = 0.5,
+    bootstrap_seed: int = None,
     verbose: bool = True
 ):
     """
@@ -382,6 +392,7 @@ def bootstrap_confidence_test(
         n_bootstrap: Number of bootstrap resamples
         confidence_level: Confidence level for interval (e.g., 0.95 for 95%)
         null_accuracy: Null hypothesis accuracy (0.5 for no parity violation)
+        bootstrap_seed: Random seed for bootstrap resampling (None for random)
         verbose: Whether to print results
         
     Returns:
@@ -423,7 +434,7 @@ def bootstrap_confidence_test(
     point_accuracy = np.mean(correct)
     
     # Bootstrap resampling
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(bootstrap_seed)
     bootstrap_accuracies = []
     
     for _ in range(n_bootstrap):
@@ -532,10 +543,10 @@ def run_bootstrap_statistical_test(
     if verbose:
         print(f"Using device: {device}")
     
-    # Create datasets
-    train_dataset = ParityViolationDataset(n_train, alpha=alpha, seed=seed * 1000)
-    val_dataset = ParityViolationDataset(n_val, alpha=alpha, seed=seed * 1000 + 1)
-    test_dataset = ParityViolationDataset(n_test, alpha=alpha, seed=seed * 1000 + 2)
+    # Create datasets (use well-separated seeds for independence)
+    train_dataset = ParityViolationDataset(n_train, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
+    val_dataset = ParityViolationDataset(n_val, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
+    test_dataset = ParityViolationDataset(n_test, alpha=alpha, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
     
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -577,12 +588,16 @@ def run_bootstrap_statistical_test(
     if verbose:
         print("\nPerforming bootstrap statistical test on test set...")
     
+    # Use a derived seed for bootstrap resampling to ensure independence
+    bootstrap_seed = seed * SEED_MULTIPLIER + SEED_OFFSET_BOOTSTRAP
+    
     bootstrap_results = bootstrap_confidence_test(
         model=model,
         dataloader=test_loader,
         device=device,
         n_bootstrap=n_bootstrap,
         confidence_level=confidence_level,
+        bootstrap_seed=bootstrap_seed,
         verbose=verbose
     )
     
@@ -638,7 +653,7 @@ def parse_args():
     parser.add_argument('--n-bootstrap', type=int, default=1000,
                         help='Number of bootstrap resamples for confidence intervals')
     parser.add_argument('--confidence-level', type=float, default=0.95,
-                        help='Confidence level for bootstrap intervals (e.g., 0.95 for 95%%)')
+                        help='Confidence level for bootstrap intervals (e.g., 0.95 for 95 percent)')
     
     # Experiment mode
     parser.add_argument('--mode', type=str, default='full',
