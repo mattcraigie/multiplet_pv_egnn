@@ -204,6 +204,25 @@ def generate_angles_parity_violating_3d(
     return np.array([phi1, phi2])
 
 
+def generate_angles_random(rng: np.random.Generator = None) -> np.ndarray:
+    """
+    Generate completely random angles for a 2-point graph (spin-2).
+    
+    For spin-2 objects, angles are sampled uniformly in [0, π).
+    This creates parity-symmetric random pairs with no systematic signal.
+    
+    Args:
+        rng: Random number generator
+        
+    Returns:
+        Array of shape (2,) with two random angles in [0, π)
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    
+    return rng.uniform(0, np.pi, size=2)
+
+
 def symmetrize_angles(angles: np.ndarray, rng: np.random.Generator = None) -> np.ndarray:
     """
     Apply parity symmetrization to angles (spin-2).
@@ -306,12 +325,24 @@ class ParityViolationDataset(Dataset):
     - edge_delta_z: signed line-of-sight separation (z2 - z1)
     - edge_sin_2delta_phi: sin(2Δφ) parity-odd feature for spin-2
     - label: 1 for real (parity-violating), 0 for symmetrized
+    
+    The f_pv parameter controls what fraction of pairs have parity-violating
+    angle correlations vs completely random angles:
+    - f_pv = 1.0: All pairs are parity-violating (original behavior)
+    - f_pv = 0.0: All pairs have random angles (no signal)
+    - Intermediate values interpolate between these extremes
+    
+    Expected classifier accuracy scales with f_pv:
+    - f_pv = 0: ~50% (random guessing)
+    - f_pv = 1: ~75% (Bayes optimal)
+    - accuracy ≈ 0.5 + f_pv / 4 (theoretical limit)
     """
     
     def __init__(
         self,
         n_samples: int,
         alpha: float = 0.3,
+        f_pv: float = 1.0,
         box_size: float = 10.0,
         box_size_z: float = None,
         min_separation: float = 1.0,
@@ -325,6 +356,9 @@ class ParityViolationDataset(Dataset):
         Args:
             n_samples: Total number of samples (half real, half symmetrized)
             alpha: Parity violation angle offset (default 0.3 rad for spin-2)
+            f_pv: Fraction of pairs that are parity-violating (0.0 to 1.0).
+                  f_pv=1.0 means all pairs are PV (original behavior).
+                  f_pv=0.0 means all pairs have random angles (no signal).
             box_size: Box size for position sampling in x, y
             box_size_z: Box size for position sampling in z (defaults to box_size)
             min_separation: Minimum point separation in x-y plane
@@ -332,8 +366,12 @@ class ParityViolationDataset(Dataset):
             dz_max: Maximum line-of-sight separation (defaults to max_separation)
             seed: Random seed for reproducibility
         """
+        if not 0.0 <= f_pv <= 1.0:
+            raise ValueError(f"f_pv must be in [0, 1], got {f_pv}")
+        
         self.n_samples = n_samples
         self.alpha = alpha
+        self.f_pv = f_pv
         self.box_size = box_size
         self.box_size_z = box_size_z if box_size_z is not None else box_size
         self.min_separation = min_separation
@@ -357,6 +395,8 @@ class ParityViolationDataset(Dataset):
         self.labels = []
         
         # Generate real (parity-violating) samples
+        # With probability f_pv: use parity-violating angles
+        # With probability (1 - f_pv): use completely random angles
         for _ in range(n_each):
             positions = generate_point_pair_3d(
                 self.box_size, self.box_size_z,
@@ -366,8 +406,13 @@ class ParityViolationDataset(Dataset):
             # Compute delta_z for angle generation
             delta_z = compute_delta_z(positions)
             
-            # Generate angles with 3D parity-violating rule
-            angles = generate_angles_parity_violating_3d(self.alpha, delta_z, self.rng)
+            # Generate angles based on f_pv mixture
+            if self.rng.random() < self.f_pv:
+                # Parity-violating angles
+                angles = generate_angles_parity_violating_3d(self.alpha, delta_z, self.rng)
+            else:
+                # Completely random angles (no parity signal)
+                angles = generate_angles_random(self.rng)
             
             node_feat = compute_node_features(angles)
             edge_feat = compute_edge_features(positions, angles)
@@ -381,6 +426,7 @@ class ParityViolationDataset(Dataset):
             self.labels.append(1)  # Real sample
         
         # Generate symmetrized samples
+        # Same mixture rule as real samples, then apply symmetrization
         for _ in range(n_each):
             positions = generate_point_pair_3d(
                 self.box_size, self.box_size_z,
@@ -390,8 +436,17 @@ class ParityViolationDataset(Dataset):
             # Compute delta_z for angle generation
             delta_z = compute_delta_z(positions)
             
-            # Generate angles with 3D parity-violating rule, then symmetrize
-            angles = generate_angles_parity_violating_3d(self.alpha, delta_z, self.rng)
+            # Generate angles using the same mixture as real samples
+            if self.rng.random() < self.f_pv:
+                # Parity-violating angles
+                angles = generate_angles_parity_violating_3d(self.alpha, delta_z, self.rng)
+            else:
+                # Completely random angles (no parity signal)
+                angles = generate_angles_random(self.rng)
+            
+            # Apply symmetrization (50% chance to flip angles)
+            # Note: For random angles, this flip doesn't change the distribution
+            # For PV angles, half are flipped into their mirror version
             angles = symmetrize_angles(angles, self.rng)
             
             node_feat = compute_node_features(angles)
