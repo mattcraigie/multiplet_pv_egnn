@@ -107,3 +107,6 @@ venv.bak/
 
 # Visualizations output
 visualizations/
+
+# Grid search results
+grid_search_results/
