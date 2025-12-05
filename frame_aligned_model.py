@@ -407,6 +407,10 @@ class MultiHopFrameAlignedPVClassifier(nn.Module):
         slot_norms = torch.norm(H, dim=-1)  # [N, num_slots]
         
         # Global mean pooling over nodes in each graph
+        if batch.numel() == 0:
+            # Handle empty batch case
+            return torch.zeros(0, device=positions.device)
+        
         batch_size = batch.max().item() + 1
         graph_features = torch.zeros(batch_size, self.num_slots, device=positions.device)
         node_counts = torch.zeros(batch_size, device=positions.device)

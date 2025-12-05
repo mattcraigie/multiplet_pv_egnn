@@ -364,6 +364,10 @@ class MultiHopParityViolationEGNN(nn.Module):
             h = mp_layer(h, edge_index, edge_features)
         
         # Global mean pooling over nodes in each graph
+        if batch.numel() == 0:
+            # Handle empty batch case
+            return torch.zeros(0, device=positions.device)
+        
         batch_size = batch.max().item() + 1
         graph_embed = torch.zeros(batch_size, self.hidden_dim, device=positions.device)
         node_counts = torch.zeros(batch_size, device=positions.device)
