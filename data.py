@@ -613,3 +613,439 @@ class ParitySymmetricDataset(Dataset):
             'edge_sin_2delta_phi': self.edge_sin_2delta_phis[idx],
             'label': self.labels[idx]
         }
+
+
+# =============================================================================
+# Multi-Hop Parity Violation Dataset
+# =============================================================================
+
+def generate_points_3d(
+    n_nodes: int,
+    box_size: float = 10.0,
+    box_size_z: float = None,
+    rng: np.random.Generator = None
+) -> np.ndarray:
+    """
+    Generate N 3D points uniformly within a box.
+    
+    Args:
+        n_nodes: Number of points to generate
+        box_size: Size of the box in x, y dimensions
+        box_size_z: Size of the box in z dimension (defaults to box_size)
+        rng: Random number generator
+        
+    Returns:
+        Array of shape (n_nodes, 3) with 3D positions
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    
+    if box_size_z is None:
+        box_size_z = box_size
+    
+    x = rng.uniform(0, box_size, size=n_nodes)
+    y = rng.uniform(0, box_size, size=n_nodes)
+    z = rng.uniform(0, box_size_z, size=n_nodes)
+    
+    return np.stack([x, y, z], axis=-1)
+
+
+def build_knn_graph(
+    positions: np.ndarray,
+    k: int = 5
+) -> np.ndarray:
+    """
+    Build a k-nearest neighbor graph from positions.
+    
+    Args:
+        positions: Array of shape (n_nodes, 3) with 3D positions
+        k: Number of nearest neighbors to connect
+        
+    Returns:
+        edge_index: Array of shape (2, n_edges) with [targets, sources]
+                    representing bidirectional edges
+    """
+    n_nodes = positions.shape[0]
+    
+    # Compute pairwise distances
+    diff = positions[:, np.newaxis, :] - positions[np.newaxis, :, :]  # (N, N, 3)
+    distances = np.linalg.norm(diff, axis=-1)  # (N, N)
+    
+    # For each node, find k nearest neighbors (excluding self)
+    # Set self-distance to infinity to exclude
+    np.fill_diagonal(distances, np.inf)
+    
+    edges_i = []
+    edges_j = []
+    
+    for i in range(n_nodes):
+        # Get indices of k nearest neighbors
+        nearest = np.argsort(distances[i])[:k]
+        for j in nearest:
+            # Add bidirectional edge
+            edges_i.append(i)
+            edges_j.append(j)
+    
+    # Stack to create edge_index [targets, sources]
+    edge_index = np.array([edges_i, edges_j], dtype=np.int64)
+    
+    return edge_index
+
+
+def build_radius_graph(
+    positions: np.ndarray,
+    r_max: float = 3.0
+) -> np.ndarray:
+    """
+    Build a radius graph from positions.
+    
+    Args:
+        positions: Array of shape (n_nodes, 3) with 3D positions
+        r_max: Maximum distance to connect nodes
+        
+    Returns:
+        edge_index: Array of shape (2, n_edges) with [targets, sources]
+                    representing bidirectional edges
+    """
+    n_nodes = positions.shape[0]
+    
+    # Compute pairwise distances
+    diff = positions[:, np.newaxis, :] - positions[np.newaxis, :, :]  # (N, N, 3)
+    distances = np.linalg.norm(diff, axis=-1)  # (N, N)
+    
+    # Find pairs within r_max (excluding self-loops)
+    np.fill_diagonal(distances, np.inf)
+    mask = distances <= r_max
+    
+    # Get indices
+    edges_i, edges_j = np.where(mask)
+    
+    edge_index = np.array([edges_i, edges_j], dtype=np.int64)
+    
+    return edge_index
+
+
+def compute_graph_distances(
+    edge_index: np.ndarray,
+    n_nodes: int
+) -> np.ndarray:
+    """
+    Compute shortest path distances between all pairs of nodes using BFS.
+    
+    Args:
+        edge_index: Array of shape (2, n_edges) with [targets, sources]
+        n_nodes: Number of nodes in the graph
+        
+    Returns:
+        dist_matrix: Array of shape (n_nodes, n_nodes) with shortest path distances
+                     (np.inf for disconnected pairs)
+    """
+    # Build adjacency list
+    adj = [[] for _ in range(n_nodes)]
+    for idx in range(edge_index.shape[1]):
+        i, j = edge_index[0, idx], edge_index[1, idx]
+        adj[i].append(j)
+    
+    # BFS from each node
+    dist_matrix = np.full((n_nodes, n_nodes), np.inf)
+    
+    for start in range(n_nodes):
+        dist_matrix[start, start] = 0
+        queue = [start]
+        head = 0
+        while head < len(queue):
+            node = queue[head]
+            head += 1
+            for neighbor in adj[node]:
+                if dist_matrix[start, neighbor] == np.inf:
+                    dist_matrix[start, neighbor] = dist_matrix[start, node] + 1
+                    queue.append(neighbor)
+    
+    return dist_matrix
+
+
+def select_special_pair(
+    positions: np.ndarray,
+    edge_index: np.ndarray,
+    min_hops: int = 2,
+    max_hops: int = 4,
+    rng: np.random.Generator = None
+) -> tuple:
+    """
+    Select a "special" ordered pair of nodes that are multiple hops apart in the graph.
+    
+    Args:
+        positions: Array of shape (n_nodes, 3) with 3D positions
+        edge_index: Array of shape (2, n_edges) with graph edges
+        min_hops: Minimum number of hops between the special pair
+        max_hops: Maximum number of hops between the special pair
+        rng: Random number generator
+        
+    Returns:
+        Tuple (p, q) of node indices forming the special pair, or None if not found
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    
+    n_nodes = positions.shape[0]
+    
+    # Compute graph distances
+    dist_matrix = compute_graph_distances(edge_index, n_nodes)
+    
+    # Find pairs that are min_hops to max_hops apart
+    valid_pairs = []
+    for p in range(n_nodes):
+        for q in range(n_nodes):
+            if p != q and min_hops <= dist_matrix[p, q] <= max_hops:
+                valid_pairs.append((p, q))
+    
+    if len(valid_pairs) == 0:
+        return None
+    
+    # Randomly select a valid pair
+    idx = rng.integers(len(valid_pairs))
+    return valid_pairs[idx]
+
+
+def generate_multi_hop_angles(
+    n_nodes: int,
+    special_pair: tuple,
+    positions: np.ndarray,
+    alpha: float = 0.3,
+    parity_violating: bool = True,
+    rng: np.random.Generator = None
+) -> np.ndarray:
+    """
+    Generate angles for all nodes, with PV signal hidden in the special pair.
+    
+    Args:
+        n_nodes: Number of nodes
+        special_pair: Tuple (p, q) of special pair indices
+        positions: Array of shape (n_nodes, 3) with 3D positions
+        alpha: Parity violation angle offset
+        parity_violating: Whether to apply PV correlation to special pair
+        rng: Random number generator
+        
+    Returns:
+        Array of shape (n_nodes,) with angles in [0, π)
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    
+    # Initialize all angles as random noise
+    angles = rng.uniform(0, np.pi, size=n_nodes)
+    
+    if special_pair is not None:
+        p, q = special_pair
+        
+        # Compute delta_z for the special pair
+        delta_z = positions[q, 2] - positions[p, 2]
+        
+        # Sample base orientation
+        phi0 = rng.uniform(0, np.pi)
+        
+        if parity_violating:
+            # Apply PV correlation based on sign of delta_z
+            if delta_z >= 0:
+                angles[p] = (phi0 - alpha) % np.pi
+                angles[q] = (phi0 + alpha) % np.pi
+            else:
+                angles[p] = (phi0 + alpha) % np.pi
+                angles[q] = (phi0 - alpha) % np.pi
+        else:
+            # Symmetrize: randomly flip the PV pattern
+            if rng.random() < 0.5:
+                if delta_z >= 0:
+                    angles[p] = (phi0 - alpha) % np.pi
+                    angles[q] = (phi0 + alpha) % np.pi
+                else:
+                    angles[p] = (phi0 + alpha) % np.pi
+                    angles[q] = (phi0 - alpha) % np.pi
+            else:
+                # Flip angles: φ → -φ (mod π)
+                if delta_z >= 0:
+                    angles[p] = (-phi0 + alpha) % np.pi
+                    angles[q] = (-phi0 - alpha) % np.pi
+                else:
+                    angles[p] = (-phi0 - alpha) % np.pi
+                    angles[q] = (-phi0 + alpha) % np.pi
+    
+    return angles
+
+
+class MultiHopParityViolationDataset(Dataset):
+    """
+    PyTorch Dataset for multi-hop parity violation detection with spin-2 objects.
+    
+    This dataset generates graphs with N nodes where:
+    - Nodes are positioned in 3D space
+    - Edges are created via k-NN or radius graph construction
+    - A special pair (p, q) that are multiple hops apart carries the PV signal
+    - All other nodes have random noise angles
+    
+    Each sample contains:
+    - positions: (n_nodes, 3) tensor with 3D positions
+    - angles: (n_nodes,) tensor with orientations in [0, π)
+    - node_features: (n_nodes, 2) tensor with (cos(2φ), sin(2φ))
+    - edge_index: (2, n_edges) tensor with graph connectivity
+    - special_pair: (2,) tensor with indices of the special pair [p, q]
+    - label: 1 for real (parity-violating), 0 for symmetrized
+    """
+    
+    def __init__(
+        self,
+        n_samples: int,
+        n_nodes: int = 10,
+        alpha: float = 0.3,
+        box_size: float = 10.0,
+        box_size_z: float = None,
+        graph_type: str = 'knn',
+        k: int = 3,
+        r_max: float = 3.0,
+        min_hops: int = 2,
+        max_hops: int = 4,
+        seed: int = None
+    ):
+        """
+        Initialize the multi-hop dataset.
+        
+        Args:
+            n_samples: Total number of samples (half real, half symmetrized)
+            n_nodes: Number of nodes per graph
+            alpha: Parity violation angle offset
+            box_size: Box size for position sampling in x, y
+            box_size_z: Box size in z (defaults to box_size)
+            graph_type: 'knn' for k-nearest neighbors, 'radius' for radius graph
+            k: Number of neighbors for k-NN graph
+            r_max: Maximum radius for radius graph
+            min_hops: Minimum hops between special pair
+            max_hops: Maximum hops between special pair
+            seed: Random seed for reproducibility
+        """
+        self.n_samples = n_samples
+        self.n_nodes = n_nodes
+        self.alpha = alpha
+        self.box_size = box_size
+        self.box_size_z = box_size_z if box_size_z is not None else box_size
+        self.graph_type = graph_type
+        self.k = k
+        self.r_max = r_max
+        self.min_hops = min_hops
+        self.max_hops = max_hops
+        
+        self.rng = np.random.default_rng(seed)
+        self._generate_data()
+    
+    def _generate_data(self):
+        """Generate all samples."""
+        n_each = self.n_samples // 2
+        
+        self.positions_list = []
+        self.angles_list = []
+        self.node_features_list = []
+        self.edge_index_list = []
+        self.special_pair_list = []
+        self.labels = []
+        
+        # Track samples without valid special pairs
+        skipped_samples = 0
+        max_retries = 10
+        
+        # Generate real (parity-violating) samples
+        for _ in range(n_each):
+            sample = self._generate_single_sample(parity_violating=True, max_retries=max_retries)
+            if sample is not None:
+                positions, angles, node_features, edge_index, special_pair = sample
+                self.positions_list.append(positions)
+                self.angles_list.append(angles)
+                self.node_features_list.append(node_features)
+                self.edge_index_list.append(edge_index)
+                self.special_pair_list.append(special_pair)
+                self.labels.append(1)
+            else:
+                skipped_samples += 1
+        
+        # Generate symmetrized samples
+        for _ in range(n_each):
+            sample = self._generate_single_sample(parity_violating=False, max_retries=max_retries)
+            if sample is not None:
+                positions, angles, node_features, edge_index, special_pair = sample
+                self.positions_list.append(positions)
+                self.angles_list.append(angles)
+                self.node_features_list.append(node_features)
+                self.edge_index_list.append(edge_index)
+                self.special_pair_list.append(special_pair)
+                self.labels.append(0)
+            else:
+                skipped_samples += 1
+        
+        if skipped_samples > 0:
+            print(f"Warning: {skipped_samples} samples skipped due to no valid special pair")
+        
+        # Update n_samples to actual number of samples generated
+        self.n_samples = len(self.labels)
+        
+        # Convert to tensors
+        self.labels = torch.tensor(self.labels, dtype=torch.float32)
+    
+    def _generate_single_sample(self, parity_violating: bool, max_retries: int = 10):
+        """
+        Generate a single sample.
+        
+        Args:
+            parity_violating: Whether this is a PV sample
+            max_retries: Maximum attempts to find valid graph
+            
+        Returns:
+            Tuple of (positions, angles, node_features, edge_index, special_pair)
+            or None if no valid graph found
+        """
+        for _ in range(max_retries):
+            # Generate positions
+            positions = generate_points_3d(
+                self.n_nodes, self.box_size, self.box_size_z, self.rng
+            )
+            
+            # Build graph
+            if self.graph_type == 'knn':
+                edge_index = build_knn_graph(positions, self.k)
+            else:
+                edge_index = build_radius_graph(positions, self.r_max)
+            
+            # Select special pair
+            special_pair = select_special_pair(
+                positions, edge_index, self.min_hops, self.max_hops, self.rng
+            )
+            
+            if special_pair is not None:
+                # Generate angles
+                angles = generate_multi_hop_angles(
+                    self.n_nodes, special_pair, positions,
+                    self.alpha, parity_violating, self.rng
+                )
+                
+                # Compute node features
+                node_features = compute_node_features(angles)
+                
+                return (
+                    torch.tensor(positions, dtype=torch.float32),
+                    torch.tensor(angles, dtype=torch.float32),
+                    torch.tensor(node_features, dtype=torch.float32),
+                    torch.tensor(edge_index, dtype=torch.long),
+                    torch.tensor(special_pair, dtype=torch.long)
+                )
+        
+        return None
+    
+    def __len__(self):
+        return self.n_samples
+    
+    def __getitem__(self, idx):
+        return {
+            'positions': self.positions_list[idx],
+            'angles': self.angles_list[idx],
+            'node_features': self.node_features_list[idx],
+            'edge_index': self.edge_index_list[idx],
+            'special_pair': self.special_pair_list[idx],
+            'label': self.labels[idx]
+        }
