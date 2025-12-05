@@ -39,7 +39,7 @@ ACCURACY_HEATMAP_TEXT_THRESHOLD = 70   # Threshold for accuracy heatmap
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
-from train import run_bootstrap_statistical_test
+from train import run_bootstrap_statistical_test, DEFAULT_MODEL_TYPE, MODEL_TYPE_FRAME_ALIGNED, MODEL_TYPE_EGNN
 
 
 # Default grid search configuration
@@ -54,9 +54,12 @@ DEFAULT_CONFIG = {
     'n_test': 100000,
     
     # Model parameters
+    'model_type': DEFAULT_MODEL_TYPE,  # Default to new Frame-Aligned model
     'alpha': 0.3,
     'hidden_dim': 16,
     'n_layers': 2,
+    'num_slots': 8,
+    'num_hops': 2,
     
     # Training parameters
     'batch_size': 64,
@@ -163,7 +166,10 @@ def run_grid_search(config: dict) -> dict:
                     confidence_level=config['confidence_level'],
                     verbose=verbose,
                     early_stopping_patience=config['early_stopping_patience'],
-                    early_stopping_min_delta=config['early_stopping_min_delta']
+                    early_stopping_min_delta=config['early_stopping_min_delta'],
+                    model_type=config.get('model_type', DEFAULT_MODEL_TYPE),
+                    num_slots=config.get('num_slots', 8),
+                    num_hops=config.get('num_hops', 2)
                 )
                 
                 # Store results
@@ -244,7 +250,10 @@ def detection_function(
             confidence_level=config['confidence_level'],
             verbose=config.get('verbose', False),
             early_stopping_patience=config['early_stopping_patience'],
-            early_stopping_min_delta=config['early_stopping_min_delta']
+            early_stopping_min_delta=config['early_stopping_min_delta'],
+            model_type=config.get('model_type', DEFAULT_MODEL_TYPE),
+            num_slots=config.get('num_slots', 8),
+            num_hops=config.get('num_hops', 2)
         )
         return 1 if run_results['parity_violation_detected'] else 0
     except Exception as e:

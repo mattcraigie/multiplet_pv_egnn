@@ -6,6 +6,10 @@ Implements:
 - Validation and test evaluation
 - Accuracy and loss tracking
 - Bootstrap-based statistical test for parity violation detection
+
+Supports two model types:
+- 'egnn': Original EGNN-like classifier (from model.py)
+- 'frame_aligned': Frame-Aligned GNN classifier (from frame_aligned_model.py)
 """
 
 import argparse
@@ -16,6 +20,13 @@ import numpy as np
 
 from data import ParityViolationDataset, ParitySymmetricDataset
 from model import ParityViolationEGNN
+from frame_aligned_model import FrameAlignedPVClassifier
+
+
+# Model type constants
+MODEL_TYPE_EGNN = 'egnn'
+MODEL_TYPE_FRAME_ALIGNED = 'frame_aligned'
+DEFAULT_MODEL_TYPE = MODEL_TYPE_FRAME_ALIGNED  # Default to the new model
 
 
 # Seed generation constants for dataset independence
@@ -27,16 +38,17 @@ SEED_OFFSET_TEST = 2    # Offset for test dataset
 SEED_OFFSET_BOOTSTRAP = 3  # Offset for bootstrap resampling
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device):
+def train_epoch(model, dataloader, optimizer, criterion, device, model_type=DEFAULT_MODEL_TYPE):
     """
     Train for one epoch.
     
     Args:
-        model: The EGNN classifier
+        model: The classifier
         dataloader: Training dataloader
         optimizer: Optimizer
         criterion: Loss function (BCE)
         device: Device to train on
+        model_type: Type of model ('egnn' or 'frame_aligned')
         
     Returns:
         Average loss for the epoch
@@ -46,15 +58,20 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
     n_batches = 0
     
     for batch in dataloader:
-        node_features = batch['node_features'].to(device)
-        edge_distance_3d = batch['edge_distance_3d'].to(device)
-        edge_delta_z = batch['edge_delta_z'].to(device)
-        edge_sin_2delta_phi = batch['edge_sin_2delta_phi'].to(device)
         labels = batch['label'].to(device)
-        
         optimizer.zero_grad()
         
-        logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
+        if model_type == MODEL_TYPE_FRAME_ALIGNED:
+            positions = batch['positions'].to(device)
+            angles = batch['angles'].to(device)
+            logits = model(positions, angles)
+        else:
+            node_features = batch['node_features'].to(device)
+            edge_distance_3d = batch['edge_distance_3d'].to(device)
+            edge_delta_z = batch['edge_delta_z'].to(device)
+            edge_sin_2delta_phi = batch['edge_sin_2delta_phi'].to(device)
+            logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
+        
         loss = criterion(logits, labels)
         
         loss.backward()
@@ -66,15 +83,16 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
     return total_loss / n_batches
 
 
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, device, model_type=DEFAULT_MODEL_TYPE):
     """
     Evaluate the model.
     
     Args:
-        model: The EGNN classifier
+        model: The classifier
         dataloader: Evaluation dataloader
         criterion: Loss function
         device: Device to evaluate on
+        model_type: Type of model ('egnn' or 'frame_aligned')
         
     Returns:
         Dictionary with loss and accuracy
@@ -86,13 +104,19 @@ def evaluate(model, dataloader, criterion, device):
     
     with torch.no_grad():
         for batch in dataloader:
-            node_features = batch['node_features'].to(device)
-            edge_distance_3d = batch['edge_distance_3d'].to(device)
-            edge_delta_z = batch['edge_delta_z'].to(device)
-            edge_sin_2delta_phi = batch['edge_sin_2delta_phi'].to(device)
             labels = batch['label'].to(device)
             
-            logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
+            if model_type == MODEL_TYPE_FRAME_ALIGNED:
+                positions = batch['positions'].to(device)
+                angles = batch['angles'].to(device)
+                logits = model(positions, angles)
+            else:
+                node_features = batch['node_features'].to(device)
+                edge_distance_3d = batch['edge_distance_3d'].to(device)
+                edge_delta_z = batch['edge_delta_z'].to(device)
+                edge_sin_2delta_phi = batch['edge_sin_2delta_phi'].to(device)
+                logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
+            
             loss = criterion(logits, labels)
             
             total_loss += loss.item() * len(labels)
@@ -158,6 +182,37 @@ class EarlyStopping:
             model.load_state_dict(self.best_model_state)
 
 
+def create_model(model_type, hidden_dim, n_layers, num_slots=8, num_hops=2, readout_dim=32):
+    """
+    Create a model based on the model type.
+    
+    Args:
+        model_type: 'egnn' or 'frame_aligned'
+        hidden_dim: Hidden dimension for the model
+        n_layers: Number of message passing layers (for egnn)
+        num_slots: Number of latent slots (for frame_aligned)
+        num_hops: Number of message passing hops (for frame_aligned)
+        readout_dim: Readout dimension (for frame_aligned)
+        
+    Returns:
+        The model instance
+    """
+    if model_type == MODEL_TYPE_FRAME_ALIGNED:
+        return FrameAlignedPVClassifier(
+            num_slots=num_slots,
+            hidden_dim=hidden_dim,
+            num_hops=num_hops,
+            readout_dim=readout_dim
+        )
+    else:
+        return ParityViolationEGNN(
+            node_input_dim=2,
+            edge_input_dim=3,
+            hidden_dim=hidden_dim,
+            n_layers=n_layers
+        )
+
+
 def run_experiment(
     n_train: int = 4000,
     n_val: int = 1000,
@@ -172,7 +227,10 @@ def run_experiment(
     seed: int = 42,
     verbose: bool = True,
     early_stopping_patience: int = None,
-    early_stopping_min_delta: float = 1e-4
+    early_stopping_min_delta: float = 1e-4,
+    model_type: str = DEFAULT_MODEL_TYPE,
+    num_slots: int = 8,
+    num_hops: int = 2
 ):
     """
     Run a complete training experiment.
@@ -195,6 +253,9 @@ def run_experiment(
         early_stopping_patience: Number of epochs to wait for improvement before stopping.
                                  If None, early stopping is disabled.
         early_stopping_min_delta: Minimum change in validation loss to qualify as improvement.
+        model_type: Type of model ('egnn' or 'frame_aligned')
+        num_slots: Number of latent slots (for frame_aligned model)
+        num_hops: Number of message passing hops (for frame_aligned model)
         
     Returns:
         Dictionary with final results and loss history
@@ -217,13 +278,17 @@ def run_experiment(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model (edge_input_dim=3 for distance_3d, delta_z, sin_2delta_phi)
-    model = ParityViolationEGNN(
-        node_input_dim=2,
-        edge_input_dim=3,
+    # Create model based on model type
+    model = create_model(
+        model_type=model_type,
         hidden_dim=hidden_dim,
-        n_layers=n_layers
+        n_layers=n_layers,
+        num_slots=num_slots,
+        num_hops=num_hops
     ).to(device)
+    
+    if verbose:
+        print(f"Using model type: {model_type}")
     
     # Training setup
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -243,8 +308,8 @@ def run_experiment(
     
     # Training loop
     for epoch in range(n_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_metrics = evaluate(model, val_loader, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, model_type)
+        val_metrics = evaluate(model, val_loader, criterion, device, model_type)
         
         train_losses.append(train_loss)
         val_losses.append(val_metrics['loss'])
@@ -268,7 +333,7 @@ def run_experiment(
                   f"Val Acc = {val_metrics['accuracy']:.4f}")
     
     # Final evaluation on test set
-    test_metrics = evaluate(model, test_loader, criterion, device)
+    test_metrics = evaluate(model, test_loader, criterion, device, model_type)
     if verbose:
         print(f"\nTest Results: "
               f"Loss = {test_metrics['loss']:.4f}, "
@@ -295,7 +360,10 @@ def run_control_experiment(
     n_epochs: int = 20,
     lr: float = 1e-3,
     seed: int = 42,
-    verbose: bool = True
+    verbose: bool = True,
+    model_type: str = DEFAULT_MODEL_TYPE,
+    num_slots: int = 8,
+    num_hops: int = 2
 ):
     """
     Run control experiment with parity-symmetric data.
@@ -326,13 +394,17 @@ def run_control_experiment(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model (edge_input_dim=3 for distance_3d, delta_z, sin_2delta_phi)
-    model = ParityViolationEGNN(
-        node_input_dim=2,
-        edge_input_dim=3,
+    # Create model based on model type
+    model = create_model(
+        model_type=model_type,
         hidden_dim=hidden_dim,
-        n_layers=n_layers
+        n_layers=n_layers,
+        num_slots=num_slots,
+        num_hops=num_hops
     ).to(device)
+    
+    if verbose:
+        print(f"Using model type: {model_type}")
     
     # Training setup
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -345,8 +417,8 @@ def run_control_experiment(
     
     # Training loop
     for epoch in range(n_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_metrics = evaluate(model, val_loader, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, model_type)
+        val_metrics = evaluate(model, val_loader, criterion, device, model_type)
         
         train_losses.append(train_loss)
         val_losses.append(val_metrics['loss'])
@@ -359,7 +431,7 @@ def run_control_experiment(
                   f"Val Acc = {val_metrics['accuracy']:.4f}")
     
     # Final evaluation
-    test_metrics = evaluate(model, test_loader, criterion, device)
+    test_metrics = evaluate(model, test_loader, criterion, device, model_type)
     if verbose:
         print(f"\nControl Test Results: "
               f"Loss = {test_metrics['loss']:.4f}, "
@@ -383,7 +455,10 @@ def run_statistical_test(
     alpha: float = 0.3,
     f_pv: float = 1.0,
     n_epochs: int = 20,
-    verbose: bool = True
+    verbose: bool = True,
+    model_type: str = DEFAULT_MODEL_TYPE,
+    num_slots: int = 8,
+    num_hops: int = 2
 ):
     """
     Run multiple experiments with different seeds for statistical robustness.
@@ -419,7 +494,10 @@ def run_statistical_test(
             f_pv=f_pv,
             n_epochs=n_epochs,
             seed=seed,
-            verbose=verbose
+            verbose=verbose,
+            model_type=model_type,
+            num_slots=num_slots,
+            num_hops=num_hops
         )
         accuracies.append(results['test_accuracy'])
     
@@ -452,7 +530,8 @@ def bootstrap_confidence_test(
     confidence_level: float = 0.95,
     null_accuracy: float = 0.5,
     bootstrap_seed: int = None,
-    verbose: bool = True
+    verbose: bool = True,
+    model_type: str = DEFAULT_MODEL_TYPE
 ):
     """
     Perform bootstrap resampling to compute confidence intervals for accuracy
@@ -463,7 +542,7 @@ def bootstrap_confidence_test(
     field violates parity.
     
     Args:
-        model: Trained EGNN classifier
+        model: Trained classifier
         dataloader: DataLoader for evaluation data
         device: Device to evaluate on
         n_bootstrap: Number of bootstrap resamples
@@ -471,6 +550,7 @@ def bootstrap_confidence_test(
         null_accuracy: Null hypothesis accuracy (0.5 for no parity violation)
         bootstrap_seed: Random seed for bootstrap resampling (None for random)
         verbose: Whether to print results
+        model_type: Type of model ('egnn' or 'frame_aligned')
         
     Returns:
         Dictionary with:
@@ -490,13 +570,19 @@ def bootstrap_confidence_test(
     
     with torch.no_grad():
         for batch in dataloader:
-            node_features = batch['node_features'].to(device)
-            edge_distance_3d = batch['edge_distance_3d'].to(device)
-            edge_delta_z = batch['edge_delta_z'].to(device)
-            edge_sin_2delta_phi = batch['edge_sin_2delta_phi'].to(device)
             labels = batch['label'].to(device)
             
-            logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
+            if model_type == MODEL_TYPE_FRAME_ALIGNED:
+                positions = batch['positions'].to(device)
+                angles = batch['angles'].to(device)
+                logits = model(positions, angles)
+            else:
+                node_features = batch['node_features'].to(device)
+                edge_distance_3d = batch['edge_distance_3d'].to(device)
+                edge_delta_z = batch['edge_delta_z'].to(device)
+                edge_sin_2delta_phi = batch['edge_sin_2delta_phi'].to(device)
+                logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
+            
             predictions = (torch.sigmoid(logits) > 0.5).float()
             
             all_predictions.extend(predictions.cpu().numpy())
@@ -589,7 +675,10 @@ def run_bootstrap_statistical_test(
     confidence_level: float = 0.95,
     verbose: bool = True,
     early_stopping_patience: int = None,
-    early_stopping_min_delta: float = 1e-4
+    early_stopping_min_delta: float = 1e-4,
+    model_type: str = DEFAULT_MODEL_TYPE,
+    num_slots: int = 8,
+    num_hops: int = 2
 ):
     """
     Train a model and perform bootstrap statistical test for parity violation.
@@ -615,6 +704,9 @@ def run_bootstrap_statistical_test(
         early_stopping_patience: Number of epochs to wait for improvement before stopping.
                                  If None, early stopping is disabled.
         early_stopping_min_delta: Minimum change in validation loss to qualify as improvement.
+        model_type: Type of model ('egnn' or 'frame_aligned')
+        num_slots: Number of latent slots (for frame_aligned model)
+        num_hops: Number of message passing hops (for frame_aligned model)
         
     Returns:
         Dictionary with training results and bootstrap test results
@@ -626,6 +718,7 @@ def run_bootstrap_statistical_test(
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if verbose:
         print(f"Using device: {device}")
+        print(f"Using model type: {model_type}")
     
     # Create datasets (use well-separated seeds for independence)
     train_dataset = ParityViolationDataset(n_train, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
@@ -637,12 +730,13 @@ def run_bootstrap_statistical_test(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model
-    model = ParityViolationEGNN(
-        node_input_dim=2,
-        edge_input_dim=3,
+    # Create model based on model type
+    model = create_model(
+        model_type=model_type,
         hidden_dim=hidden_dim,
-        n_layers=n_layers
+        n_layers=n_layers,
+        num_slots=num_slots,
+        num_hops=num_hops
     ).to(device)
     
     # Training setup
@@ -661,8 +755,8 @@ def run_bootstrap_statistical_test(
     )
     
     for epoch in range(n_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_metrics = evaluate(model, val_loader, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, model_type)
+        val_metrics = evaluate(model, val_loader, criterion, device, model_type)
         
         train_losses.append(train_loss)
         val_losses.append(val_metrics['loss'])
@@ -696,7 +790,8 @@ def run_bootstrap_statistical_test(
         n_bootstrap=n_bootstrap,
         confidence_level=confidence_level,
         bootstrap_seed=bootstrap_seed,
-        verbose=verbose
+        verbose=verbose,
+        model_type=model_type
     )
     
     return {
@@ -716,7 +811,7 @@ def run_bootstrap_statistical_test(
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Train EGNN classifier for 3D parity violation detection',
+        description='Train classifier for 3D parity violation detection',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
@@ -736,10 +831,18 @@ def parse_args():
                              'Expected accuracy scales as 0.5 + f_pv/4.')
     
     # Model parameters
+    parser.add_argument('--model-type', type=str, default=DEFAULT_MODEL_TYPE,
+                        choices=[MODEL_TYPE_EGNN, MODEL_TYPE_FRAME_ALIGNED],
+                        help=f'Model type: {MODEL_TYPE_EGNN} (original EGNN) or '
+                             f'{MODEL_TYPE_FRAME_ALIGNED} (Frame-Aligned GNN)')
     parser.add_argument('--hidden-dim', type=int, default=16,
                         help='Hidden dimension for the model')
     parser.add_argument('--n-layers', type=int, default=2,
-                        help='Number of message passing layers')
+                        help='Number of message passing layers (for egnn)')
+    parser.add_argument('--num-slots', type=int, default=8,
+                        help='Number of latent slots (for frame_aligned)')
+    parser.add_argument('--num-hops', type=int, default=2,
+                        help='Number of message passing hops (for frame_aligned)')
     
     # Training parameters
     parser.add_argument('--batch-size', type=int, default=64,
@@ -786,13 +889,18 @@ if __name__ == '__main__':
     verbose = not args.quiet
     
     print("="*60)
-    print("3D Parity-Violating EGNN Experiment (Spin-2)")
+    print("3D Parity-Violating Classifier Experiment (Spin-2)")
     print("="*60)
     
     if verbose:
         print(f"\nConfiguration:")
+        print(f"  model_type={args.model_type}")
         print(f"  n_train={args.n_train}, n_val={args.n_val}, n_test={args.n_test}")
-        print(f"  alpha={args.alpha}, f_pv={args.f_pv}, hidden_dim={args.hidden_dim}, n_layers={args.n_layers}")
+        print(f"  alpha={args.alpha}, f_pv={args.f_pv}, hidden_dim={args.hidden_dim}")
+        if args.model_type == MODEL_TYPE_EGNN:
+            print(f"  n_layers={args.n_layers}")
+        else:
+            print(f"  num_slots={args.num_slots}, num_hops={args.num_hops}")
         print(f"  batch_size={args.batch_size}, n_epochs={args.n_epochs}, lr={args.lr}")
         print(f"  seed={args.seed}, mode={args.mode}")
     
@@ -819,7 +927,10 @@ if __name__ == '__main__':
             seed=args.seed,
             verbose=verbose,
             early_stopping_patience=args.early_stopping_patience,
-            early_stopping_min_delta=args.early_stopping_min_delta
+            early_stopping_min_delta=args.early_stopping_min_delta,
+            model_type=args.model_type,
+            num_slots=args.num_slots,
+            num_hops=args.num_hops
         )
     
     if args.mode in ['control', 'full']:
@@ -836,7 +947,10 @@ if __name__ == '__main__':
             n_epochs=args.n_epochs,
             lr=args.lr,
             seed=args.seed,
-            verbose=verbose
+            verbose=verbose,
+            model_type=args.model_type,
+            num_slots=args.num_slots,
+            num_hops=args.num_hops
         )
     
     if args.mode in ['statistical', 'full']:
@@ -851,7 +965,10 @@ if __name__ == '__main__':
             alpha=args.alpha,
             f_pv=args.f_pv,
             n_epochs=args.n_epochs,
-            verbose=verbose
+            verbose=verbose,
+            model_type=args.model_type,
+            num_slots=args.num_slots,
+            num_hops=args.num_hops
         )
     
     if args.mode in ['bootstrap', 'full']:
@@ -874,7 +991,10 @@ if __name__ == '__main__':
             confidence_level=args.confidence_level,
             verbose=verbose,
             early_stopping_patience=args.early_stopping_patience,
-            early_stopping_min_delta=args.early_stopping_min_delta
+            early_stopping_min_delta=args.early_stopping_min_delta,
+            model_type=args.model_type,
+            num_slots=args.num_slots,
+            num_hops=args.num_hops
         )
     
     # Final summary

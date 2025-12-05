@@ -468,6 +468,12 @@ class ParityViolationDataset(Dataset):
         self.node_features = torch.tensor(
             np.array(self.node_features), dtype=torch.float32
         )
+        self.positions_tensor = torch.tensor(
+            np.array(self.positions), dtype=torch.float32
+        )
+        self.angles_tensor = torch.tensor(
+            np.array(self.angles), dtype=torch.float32
+        )
         self.edge_distances_3d = torch.tensor(
             np.array(self.edge_distances_3d), dtype=torch.float32
         )
@@ -485,6 +491,8 @@ class ParityViolationDataset(Dataset):
     def __getitem__(self, idx):
         return {
             'node_features': self.node_features[idx],
+            'positions': self.positions_tensor[idx],
+            'angles': self.angles_tensor[idx],
             'edge_distance_3d': self.edge_distances_3d[idx],
             'edge_delta_z': self.edge_delta_zs[idx],
             'edge_sin_2delta_phi': self.edge_sin_2delta_phis[idx],
@@ -575,6 +583,12 @@ class ParitySymmetricDataset(Dataset):
         self.node_features = torch.tensor(
             np.array(self.node_features), dtype=torch.float32
         )
+        self.positions_tensor = torch.tensor(
+            np.array(self.positions), dtype=torch.float32
+        )
+        self.angles_tensor = torch.tensor(
+            np.array(self.angles), dtype=torch.float32
+        )
         self.edge_distances_3d = torch.tensor(
             np.array(self.edge_distances_3d), dtype=torch.float32
         )
@@ -592,6 +606,8 @@ class ParitySymmetricDataset(Dataset):
     def __getitem__(self, idx):
         return {
             'node_features': self.node_features[idx],
+            'positions': self.positions_tensor[idx],
+            'angles': self.angles_tensor[idx],
             'edge_distance_3d': self.edge_distances_3d[idx],
             'edge_delta_z': self.edge_delta_zs[idx],
             'edge_sin_2delta_phi': self.edge_sin_2delta_phis[idx],
