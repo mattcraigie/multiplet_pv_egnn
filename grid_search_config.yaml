@@ -30,10 +30,17 @@ train_val_split: 0.8
 # Fixed test set size for all experiments
 n_test: 100000
 
+# Model type: 'frame_aligned' (new default) or 'egnn' (original)
+# frame_aligned: Frame-Aligned GNN with latent slots (recommended)
+# egnn: Original EGNN-like classifier
+model_type: frame_aligned
+
 # Model parameters
 alpha: 0.3         # Parity violation angle offset
 hidden_dim: 16     # Hidden dimension for the model
-n_layers: 2        # Number of message passing layers
+n_layers: 2        # Number of message passing layers (for egnn)
+num_slots: 8       # Number of latent slots (for frame_aligned)
+num_hops: 2        # Number of message passing hops (for frame_aligned)
 
 # Training parameters
 batch_size: 64
