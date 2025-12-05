@@ -294,18 +294,17 @@ class FrameAlignedPVClassifier(nn.Module):
         # angles: [B, 2] -> theta: [B*2]
         theta = angles.view(-1)  # [B*2]
         
-        # Create edge index for bidirectional edges in each 2-node graph
+        # Create edge index for bidirectional edges in each 2-node graph efficiently
         # For graph g: nodes are (2*g, 2*g+1)
         # Edges: (2*g) -> (2*g+1), (2*g+1) -> (2*g)
-        i_idx = []
-        j_idx = []
-        for g in range(batch_size):
-            n0, n1 = 2 * g, 2 * g + 1
-            # Bidirectional edges
-            i_idx.extend([n0, n1])  # targets
-            j_idx.extend([n1, n0])  # sources
-        
-        edge_index = torch.tensor([i_idx, j_idx], dtype=torch.long, device=device)  # [2, 2*B]
+        g = torch.arange(batch_size, device=device)
+        n0 = 2 * g      # first nodes: 0, 2, 4, ...
+        n1 = 2 * g + 1  # second nodes: 1, 3, 5, ...
+        # Targets: [n0_0, n1_0, n0_1, n1_1, ...] interleaved
+        i_idx = torch.stack([n0, n1], dim=1).view(-1)  # [2*B]
+        # Sources: [n1_0, n0_0, n1_1, n0_1, ...] interleaved  
+        j_idx = torch.stack([n1, n0], dim=1).view(-1)  # [2*B]
+        edge_index = torch.stack([i_idx, j_idx], dim=0)  # [2, 2*B]
         
         # Run frame-aligned message passing
         H = self.gnn(x, theta, edge_index)  # [B*2, num_slots, 2]

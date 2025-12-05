@@ -26,7 +26,9 @@ from frame_aligned_model import FrameAlignedPVClassifier
 # Model type constants
 MODEL_TYPE_EGNN = 'egnn'
 MODEL_TYPE_FRAME_ALIGNED = 'frame_aligned'
-DEFAULT_MODEL_TYPE = MODEL_TYPE_FRAME_ALIGNED  # Default to the new model
+# Default to the new Frame-Aligned model as requested.
+# Use --model-type egnn to use the original EGNN model.
+DEFAULT_MODEL_TYPE = MODEL_TYPE_FRAME_ALIGNED
 
 
 # Seed generation constants for dataset independence
