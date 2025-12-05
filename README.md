@@ -1,7 +1,102 @@
-# 2D Parity-Violating EGNN Toy Experiment — Implementation Instructions
+# 3D Parity-Violating Classifier for Spin-2 Objects
 
-This document provides **clear, code-free instructions** for a coding agent to implement a minimal 2D test of a **parity-sensitive EGNN classifier**.  
-The goal is to detect **parity violation in angle–position correlations** using a learnable, rotation-invariant model.
+This repository implements a parity violation detection classifier for spin-2 objects in 3D space, using graph neural network architectures.
+
+## Overview
+
+The goal is to detect **parity violation in angle–position correlations** using learnable, rotation-invariant models. The system works with:
+
+- **Spin-2 objects**: Headless orientations where angle φ and angle φ+π represent the same orientation (like line segments or galaxy ellipticities)
+- **3D positions**: x, y coordinates with z (line-of-sight) depth
+- **Parity-violating correlations**: Angle differences that correlate with line-of-sight ordering
+
+## Model Types
+
+The repository supports two model architectures:
+
+### 1. Frame-Aligned GNN (Recommended - Default)
+
+A new architecture where each node maintains its own local coordinate frame and a set of learned 2D latent vectors. Key features:
+
+- Messages are rotated into receiver's coordinate frame for orientation-aware reasoning
+- Uses spin-2 rotations (2θ) for period-π symmetry
+- Incorporates 3D distance, z-separation, and orientation features
+- Better performance on parity violation detection tasks
+
+### 2. EGNN (Original)
+
+A minimal EGNN-like message-passing classifier with:
+- Node embedding from spin-2 angle features (cos(2φ), sin(2φ))
+- Edge embedding from 3D distance, delta_z, and sin(2Δφ)
+- Mean pooling and MLP classification head
+
+## Usage
+
+### Training
+
+```bash
+# Train with Frame-Aligned GNN (default)
+python train.py --mode main --f-pv 1.0
+
+# Train with original EGNN
+python train.py --mode main --f-pv 1.0 --model-type egnn
+
+# Full experiment suite
+python train.py --mode full
+```
+
+### Model Comparison
+
+Compare the two model types:
+
+```bash
+# Default: 10,000 points, f_pv=0.05
+python compare_models.py
+
+# Custom parameters
+python compare_models.py --n-points 10000 --f-pv 0.05 --n-seeds 3
+```
+
+### Grid Search
+
+Run parameter grid search for detection capability analysis:
+
+```bash
+# Using default configuration
+python grid_search.py
+
+# With custom config
+python grid_search.py --config grid_search_config.yaml
+```
+
+## Key Parameters
+
+- `f_pv`: Fraction of pairs that are parity-violating (0.0 to 1.0)
+- `alpha`: Parity violation angle offset (default 0.3 rad)
+- `model_type`: 'frame_aligned' (recommended) or 'egnn'
+- `hidden_dim`: Hidden dimension for the model
+- `num_slots`: Number of latent slots (for frame_aligned)
+- `num_hops`: Number of message passing hops (for frame_aligned)
+
+## Files
+
+- `frame_aligned_model.py`: Frame-Aligned GNN model implementation
+- `model.py`: Original EGNN model implementation
+- `data.py`: Dataset generation for 3D spin-2 objects
+- `train.py`: Training pipeline with bootstrap statistical tests
+- `compare_models.py`: Script to compare model architectures
+- `grid_search.py`: Parameter grid search for detection analysis
+- `visualize.py`: Visualization utilities
+
+## Expected Results
+
+For f_pv=1.0 (all pairs parity-violating), the theoretical maximum accuracy is ~75% (Bayes optimal). The Frame-Aligned GNN typically achieves closer to this limit compared to the original EGNN.
+
+---
+
+# Original Implementation Instructions
+
+The sections below contain the original implementation instructions for reference.
 
 ---
 
