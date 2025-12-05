@@ -327,6 +327,110 @@ class FrameAlignedPVClassifier(nn.Module):
         return logits
 
 
+class MultiHopFrameAlignedPVClassifier(nn.Module):
+    """
+    Frame-aligned classifier for multi-hop parity violation detection with spin-2 objects.
+    
+    This classifier works with variable-size graphs where each graph has N nodes
+    and edges defined by a k-NN or radius graph.
+    
+    Architecture:
+    1. Frame-aligned message passing to build latent representations
+    2. Mean pool over all nodes (after taking norm to make rotation-invariant)
+    3. MLP classifier producing single logit
+    """
+    
+    def __init__(
+        self,
+        num_slots: int = 8,
+        hidden_dim: int = 32,
+        num_hops: int = 3,
+        readout_dim: int = 32
+    ):
+        """
+        Initialize the multi-hop classifier.
+        
+        Args:
+            num_slots: Number of latent vector slots per node
+            hidden_dim: Hidden dimension for message passing MLPs
+            num_hops: Number of message passing iterations
+            readout_dim: Dimension for the readout MLP
+        """
+        super().__init__()
+        self.num_slots = num_slots
+        self.hidden_dim = hidden_dim
+        
+        # Frame-aligned GNN backbone
+        self.gnn = FrameAlignedGNN3D(
+            num_slots=num_slots,
+            hidden_dim=hidden_dim,
+            num_hops=num_hops
+        )
+        
+        # Readout: process each slot's norm and pool
+        self.slot_readout = nn.Sequential(
+            nn.Linear(num_slots, readout_dim),
+            nn.SiLU(),
+            nn.Linear(readout_dim, readout_dim)
+        )
+        
+        # Classification head
+        self.classifier = nn.Sequential(
+            nn.Linear(readout_dim, readout_dim),
+            nn.SiLU(),
+            nn.Linear(readout_dim, 1)
+        )
+    
+    def forward(
+        self,
+        positions: torch.Tensor,   # [N, 3] - 3D positions (batched together)
+        angles: torch.Tensor,      # [N] - orientation angles in [0, π)
+        edge_index: torch.Tensor,  # [2, E] - edge connectivity
+        batch: torch.Tensor        # [N] - batch assignment for each node
+    ) -> torch.Tensor:
+        """
+        Forward pass through the classifier.
+        
+        Args:
+            positions: (N, 3) tensor with 3D positions for all nodes
+            angles: (N,) tensor with angles in [0, π) for each node
+            edge_index: (2, E) tensor with graph connectivity
+            batch: (N,) tensor indicating which graph each node belongs to
+            
+        Returns:
+            logits: (batch_size,) tensor with classification logits
+        """
+        # Run frame-aligned message passing
+        H = self.gnn(positions, angles, edge_index)  # [N, num_slots, 2]
+        
+        # Compute rotation-invariant features: norm of each slot vector
+        slot_norms = torch.norm(H, dim=-1)  # [N, num_slots]
+        
+        # Global mean pooling over nodes in each graph
+        if batch.numel() == 0:
+            # Handle empty batch case
+            return torch.zeros(0, device=positions.device)
+        
+        batch_size = batch.max().item() + 1
+        graph_features = torch.zeros(batch_size, self.num_slots, device=positions.device)
+        node_counts = torch.zeros(batch_size, device=positions.device)
+        
+        # Scatter add for pooling
+        graph_features.index_add_(0, batch, slot_norms)
+        node_counts.index_add_(0, batch, torch.ones(batch.shape[0], device=positions.device))
+        
+        # Mean pooling
+        graph_features = graph_features / node_counts.unsqueeze(-1).clamp(min=1)
+        
+        # Readout MLP
+        readout = self.slot_readout(graph_features)  # [batch_size, readout_dim]
+        
+        # Classification
+        logits = self.classifier(readout).squeeze(-1)  # [batch_size]
+        
+        return logits
+
+
 # Legacy aliases for compatibility
 FrameAlignedGNNLayer = FrameAlignedGNNLayer3D
 FrameAlignedGNN = FrameAlignedGNN3D

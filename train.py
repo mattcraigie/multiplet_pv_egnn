@@ -10,6 +10,10 @@ Implements:
 Supports two model types:
 - 'egnn': Original EGNN-like classifier (from model.py)
 - 'frame_aligned': Frame-Aligned GNN classifier (from frame_aligned_model.py)
+
+And multi-hop versions:
+- 'multi_hop_egnn': Multi-hop EGNN classifier for variable-size graphs
+- 'multi_hop_frame_aligned': Multi-hop Frame-Aligned GNN classifier
 """
 
 import argparse
@@ -18,14 +22,16 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import numpy as np
 
-from data import ParityViolationDataset, ParitySymmetricDataset
-from model import ParityViolationEGNN
-from frame_aligned_model import FrameAlignedPVClassifier
+from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
+from model import ParityViolationEGNN, MultiHopParityViolationEGNN
+from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
 
 
 # Model type constants
 MODEL_TYPE_EGNN = 'egnn'
 MODEL_TYPE_FRAME_ALIGNED = 'frame_aligned'
+MODEL_TYPE_MULTI_HOP_EGNN = 'multi_hop_egnn'
+MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED = 'multi_hop_frame_aligned'
 # Default to the new Frame-Aligned model as requested.
 # Use --model-type egnn to use the original EGNN model.
 DEFAULT_MODEL_TYPE = MODEL_TYPE_FRAME_ALIGNED
@@ -40,6 +46,66 @@ SEED_OFFSET_TEST = 2    # Offset for test dataset
 SEED_OFFSET_BOOTSTRAP = 3  # Offset for bootstrap resampling
 
 
+def multi_hop_collate_fn(batch):
+    """
+    Custom collate function for multi-hop graphs with variable edge counts.
+    
+    Batches graphs together by concatenating node features and edge indices,
+    using a batch vector to track which nodes belong to which graph.
+    
+    Args:
+        batch: List of dictionaries from MultiHopParityViolationDataset
+        
+    Returns:
+        Dictionary with batched tensors
+    """
+    # Initialize lists
+    positions_list = []
+    angles_list = []
+    node_features_list = []
+    edge_index_list = []
+    special_pair_list = []
+    labels_list = []
+    batch_list = []
+    
+    node_offset = 0
+    
+    for i, sample in enumerate(batch):
+        n_nodes = sample['positions'].shape[0]
+        
+        positions_list.append(sample['positions'])
+        angles_list.append(sample['angles'])
+        node_features_list.append(sample['node_features'])
+        
+        # Offset edge indices for batching
+        edge_index_list.append(sample['edge_index'] + node_offset)
+        
+        # Offset special pair indices
+        special_pair_list.append(sample['special_pair'] + node_offset)
+        
+        labels_list.append(sample['label'])
+        
+        # Batch assignment
+        batch_list.append(torch.full((n_nodes,), i, dtype=torch.long))
+        
+        node_offset += n_nodes
+    
+    return {
+        'positions': torch.cat(positions_list, dim=0),
+        'angles': torch.cat(angles_list, dim=0),
+        'node_features': torch.cat(node_features_list, dim=0),
+        'edge_index': torch.cat(edge_index_list, dim=1),
+        'special_pair': torch.stack(special_pair_list, dim=0),
+        'label': torch.stack(labels_list, dim=0),
+        'batch': torch.cat(batch_list, dim=0)
+    }
+
+
+def is_multi_hop_model(model_type):
+    """Check if model type is a multi-hop variant."""
+    return model_type in [MODEL_TYPE_MULTI_HOP_EGNN, MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED]
+
+
 def train_epoch(model, dataloader, optimizer, criterion, device, model_type=DEFAULT_MODEL_TYPE):
     """
     Train for one epoch.
@@ -50,7 +116,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, model_type=DEFA
         optimizer: Optimizer
         criterion: Loss function (BCE)
         device: Device to train on
-        model_type: Type of model ('egnn' or 'frame_aligned')
+        model_type: Type of model ('egnn', 'frame_aligned', 'multi_hop_egnn', 'multi_hop_frame_aligned')
         
     Returns:
         Average loss for the epoch
@@ -63,7 +129,19 @@ def train_epoch(model, dataloader, optimizer, criterion, device, model_type=DEFA
         labels = batch['label'].to(device)
         optimizer.zero_grad()
         
-        if model_type == MODEL_TYPE_FRAME_ALIGNED:
+        if model_type == MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED:
+            positions = batch['positions'].to(device)
+            angles = batch['angles'].to(device)
+            edge_index = batch['edge_index'].to(device)
+            batch_idx = batch['batch'].to(device)
+            logits = model(positions, angles, edge_index, batch_idx)
+        elif model_type == MODEL_TYPE_MULTI_HOP_EGNN:
+            positions = batch['positions'].to(device)
+            node_features = batch['node_features'].to(device)
+            edge_index = batch['edge_index'].to(device)
+            batch_idx = batch['batch'].to(device)
+            logits = model(positions, node_features, edge_index, batch_idx)
+        elif model_type == MODEL_TYPE_FRAME_ALIGNED:
             positions = batch['positions'].to(device)
             angles = batch['angles'].to(device)
             logits = model(positions, angles)
@@ -94,7 +172,7 @@ def evaluate(model, dataloader, criterion, device, model_type=DEFAULT_MODEL_TYPE
         dataloader: Evaluation dataloader
         criterion: Loss function
         device: Device to evaluate on
-        model_type: Type of model ('egnn' or 'frame_aligned')
+        model_type: Type of model ('egnn', 'frame_aligned', 'multi_hop_egnn', 'multi_hop_frame_aligned')
         
     Returns:
         Dictionary with loss and accuracy
@@ -108,7 +186,19 @@ def evaluate(model, dataloader, criterion, device, model_type=DEFAULT_MODEL_TYPE
         for batch in dataloader:
             labels = batch['label'].to(device)
             
-            if model_type == MODEL_TYPE_FRAME_ALIGNED:
+            if model_type == MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED:
+                positions = batch['positions'].to(device)
+                angles = batch['angles'].to(device)
+                edge_index = batch['edge_index'].to(device)
+                batch_idx = batch['batch'].to(device)
+                logits = model(positions, angles, edge_index, batch_idx)
+            elif model_type == MODEL_TYPE_MULTI_HOP_EGNN:
+                positions = batch['positions'].to(device)
+                node_features = batch['node_features'].to(device)
+                edge_index = batch['edge_index'].to(device)
+                batch_idx = batch['batch'].to(device)
+                logits = model(positions, node_features, edge_index, batch_idx)
+            elif model_type == MODEL_TYPE_FRAME_ALIGNED:
                 positions = batch['positions'].to(device)
                 angles = batch['angles'].to(device)
                 logits = model(positions, angles)
@@ -189,7 +279,7 @@ def create_model(model_type, hidden_dim, n_layers, num_slots=8, num_hops=2, read
     Create a model based on the model type.
     
     Args:
-        model_type: 'egnn' or 'frame_aligned'
+        model_type: 'egnn', 'frame_aligned', 'multi_hop_egnn', or 'multi_hop_frame_aligned'
         hidden_dim: Hidden dimension for the model
         n_layers: Number of message passing layers (for egnn)
         num_slots: Number of latent slots (for frame_aligned)
@@ -199,7 +289,20 @@ def create_model(model_type, hidden_dim, n_layers, num_slots=8, num_hops=2, read
     Returns:
         The model instance
     """
-    if model_type == MODEL_TYPE_FRAME_ALIGNED:
+    if model_type == MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED:
+        return MultiHopFrameAlignedPVClassifier(
+            num_slots=num_slots,
+            hidden_dim=hidden_dim,
+            num_hops=num_hops,
+            readout_dim=readout_dim
+        )
+    elif model_type == MODEL_TYPE_MULTI_HOP_EGNN:
+        return MultiHopParityViolationEGNN(
+            node_input_dim=2,
+            hidden_dim=hidden_dim,
+            n_layers=n_layers
+        )
+    elif model_type == MODEL_TYPE_FRAME_ALIGNED:
         return FrameAlignedPVClassifier(
             num_slots=num_slots,
             hidden_dim=hidden_dim,
@@ -297,6 +400,170 @@ def run_experiment(
     criterion = nn.BCEWithLogitsLoss()
     
     # Loss history for visualization
+    train_losses = []
+    val_losses = []
+    val_accuracies = []
+    
+    # Early stopping
+    early_stopping = EarlyStopping(
+        patience=early_stopping_patience,
+        min_delta=early_stopping_min_delta
+    )
+    best_val_acc = 0.0
+    
+    # Training loop
+    for epoch in range(n_epochs):
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, model_type)
+        val_metrics = evaluate(model, val_loader, criterion, device, model_type)
+        
+        train_losses.append(train_loss)
+        val_losses.append(val_metrics['loss'])
+        val_accuracies.append(val_metrics['accuracy'])
+        
+        if val_metrics['accuracy'] > best_val_acc:
+            best_val_acc = val_metrics['accuracy']
+        
+        # Early stopping check
+        if early_stopping(val_metrics['loss'], model):
+            if verbose:
+                print(f"Early stopping at epoch {epoch + 1} "
+                      f"(no improvement for {early_stopping_patience} epochs)")
+            early_stopping.restore_best_model(model)
+            break
+        
+        if verbose:
+            print(f"Epoch {epoch + 1:3d}: "
+                  f"Train Loss = {train_loss:.4f}, "
+                  f"Val Loss = {val_metrics['loss']:.4f}, "
+                  f"Val Acc = {val_metrics['accuracy']:.4f}")
+    
+    # Final evaluation on test set
+    test_metrics = evaluate(model, test_loader, criterion, device, model_type)
+    if verbose:
+        print(f"\nTest Results: "
+              f"Loss = {test_metrics['loss']:.4f}, "
+              f"Accuracy = {test_metrics['accuracy']:.4f}")
+    
+    return {
+        'test_loss': test_metrics['loss'],
+        'test_accuracy': test_metrics['accuracy'],
+        'best_val_accuracy': best_val_acc,
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'val_accuracies': val_accuracies,
+        'epochs_trained': len(train_losses)
+    }
+
+
+def run_multi_hop_experiment(
+    n_train: int = 4000,
+    n_val: int = 1000,
+    n_test: int = 1000,
+    n_nodes: int = 10,
+    alpha: float = 0.3,
+    graph_type: str = 'knn',
+    k: int = 3,
+    r_max: float = 3.0,
+    min_hops: int = 2,
+    max_hops: int = 4,
+    hidden_dim: int = 32,
+    n_layers: int = 3,
+    batch_size: int = 32,
+    n_epochs: int = 50,
+    lr: float = 1e-3,
+    seed: int = 42,
+    verbose: bool = True,
+    early_stopping_patience: int = 10,
+    early_stopping_min_delta: float = 1e-4,
+    model_type: str = MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED,
+    num_slots: int = 8,
+    num_hops: int = 3
+):
+    """
+    Run a training experiment with multi-hop parity violation dataset.
+    
+    Args:
+        n_train: Number of training samples
+        n_val: Number of validation samples
+        n_test: Number of test samples
+        n_nodes: Number of nodes per graph
+        alpha: Parity violation parameter
+        graph_type: 'knn' for k-nearest neighbors, 'radius' for radius graph
+        k: Number of neighbors for k-NN graph
+        r_max: Maximum radius for radius graph
+        min_hops: Minimum hops between special pair
+        max_hops: Maximum hops between special pair
+        hidden_dim: Hidden dimension for the model
+        n_layers: Number of message passing layers (for EGNN)
+        batch_size: Batch size for training
+        n_epochs: Number of training epochs
+        lr: Learning rate
+        seed: Random seed
+        verbose: Whether to print progress
+        early_stopping_patience: Number of epochs to wait for improvement before stopping
+        early_stopping_min_delta: Minimum change in validation loss to qualify as improvement
+        model_type: Type of model ('multi_hop_egnn' or 'multi_hop_frame_aligned')
+        num_slots: Number of latent slots (for frame_aligned model)
+        num_hops: Number of message passing hops (for frame_aligned model)
+        
+    Returns:
+        Dictionary with final results and loss history
+    """
+    # Set seeds for reproducibility
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if verbose:
+        print(f"Using device: {device}")
+        print(f"Running multi-hop experiment with {n_nodes} nodes per graph")
+        print(f"Graph type: {graph_type}, min_hops={min_hops}, max_hops={max_hops}")
+    
+    # Create datasets
+    train_dataset = MultiHopParityViolationDataset(
+        n_samples=n_train, n_nodes=n_nodes, alpha=alpha,
+        graph_type=graph_type, k=k, r_max=r_max,
+        min_hops=min_hops, max_hops=max_hops,
+        seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN
+    )
+    val_dataset = MultiHopParityViolationDataset(
+        n_samples=n_val, n_nodes=n_nodes, alpha=alpha,
+        graph_type=graph_type, k=k, r_max=r_max,
+        min_hops=min_hops, max_hops=max_hops,
+        seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL
+    )
+    test_dataset = MultiHopParityViolationDataset(
+        n_samples=n_test, n_nodes=n_nodes, alpha=alpha,
+        graph_type=graph_type, k=k, r_max=r_max,
+        min_hops=min_hops, max_hops=max_hops,
+        seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST
+    )
+    
+    if verbose:
+        print(f"Dataset sizes: train={len(train_dataset)}, val={len(val_dataset)}, test={len(test_dataset)}")
+    
+    # Create dataloaders with custom collate function
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=multi_hop_collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, collate_fn=multi_hop_collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, collate_fn=multi_hop_collate_fn)
+    
+    # Create model
+    model = create_model(
+        model_type=model_type,
+        hidden_dim=hidden_dim,
+        n_layers=n_layers,
+        num_slots=num_slots,
+        num_hops=num_hops
+    ).to(device)
+    
+    if verbose:
+        print(f"Using model type: {model_type}")
+    
+    # Training setup
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.BCEWithLogitsLoss()
+    
+    # Loss history
     train_losses = []
     val_losses = []
     val_accuracies = []
@@ -552,7 +819,7 @@ def bootstrap_confidence_test(
         null_accuracy: Null hypothesis accuracy (0.5 for no parity violation)
         bootstrap_seed: Random seed for bootstrap resampling (None for random)
         verbose: Whether to print results
-        model_type: Type of model ('egnn' or 'frame_aligned')
+        model_type: Type of model ('egnn', 'frame_aligned', 'multi_hop_egnn', 'multi_hop_frame_aligned')
         
     Returns:
         Dictionary with:
@@ -574,7 +841,19 @@ def bootstrap_confidence_test(
         for batch in dataloader:
             labels = batch['label'].to(device)
             
-            if model_type == MODEL_TYPE_FRAME_ALIGNED:
+            if model_type == MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED:
+                positions = batch['positions'].to(device)
+                angles = batch['angles'].to(device)
+                edge_index = batch['edge_index'].to(device)
+                batch_idx = batch['batch'].to(device)
+                logits = model(positions, angles, edge_index, batch_idx)
+            elif model_type == MODEL_TYPE_MULTI_HOP_EGNN:
+                positions = batch['positions'].to(device)
+                node_features = batch['node_features'].to(device)
+                edge_index = batch['edge_index'].to(device)
+                batch_idx = batch['batch'].to(device)
+                logits = model(positions, node_features, edge_index, batch_idx)
+            elif model_type == MODEL_TYPE_FRAME_ALIGNED:
                 positions = batch['positions'].to(device)
                 angles = batch['angles'].to(device)
                 logits = model(positions, angles)
@@ -832,11 +1111,29 @@ def parse_args():
                              'f_pv=0.0 means all pairs have random angles (no signal). '
                              'Expected accuracy scales as 0.5 + f_pv/4.')
     
+    # Multi-hop data parameters
+    parser.add_argument('--n-nodes', type=int, default=10,
+                        help='Number of nodes per graph (for multi-hop models)')
+    parser.add_argument('--graph-type', type=str, default='knn',
+                        choices=['knn', 'radius'],
+                        help='Graph construction type: knn or radius')
+    parser.add_argument('--k', type=int, default=3,
+                        help='Number of neighbors for k-NN graph')
+    parser.add_argument('--r-max', type=float, default=3.0,
+                        help='Maximum radius for radius graph')
+    parser.add_argument('--min-hops', type=int, default=2,
+                        help='Minimum hops between special pair')
+    parser.add_argument('--max-hops', type=int, default=4,
+                        help='Maximum hops between special pair')
+    
     # Model parameters
     parser.add_argument('--model-type', type=str, default=DEFAULT_MODEL_TYPE,
-                        choices=[MODEL_TYPE_EGNN, MODEL_TYPE_FRAME_ALIGNED],
-                        help=f'Model type: {MODEL_TYPE_EGNN} (original EGNN) or '
-                             f'{MODEL_TYPE_FRAME_ALIGNED} (Frame-Aligned GNN)')
+                        choices=[MODEL_TYPE_EGNN, MODEL_TYPE_FRAME_ALIGNED,
+                                 MODEL_TYPE_MULTI_HOP_EGNN, MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED],
+                        help=f'Model type: {MODEL_TYPE_EGNN} (original EGNN), '
+                             f'{MODEL_TYPE_FRAME_ALIGNED} (Frame-Aligned GNN), '
+                             f'{MODEL_TYPE_MULTI_HOP_EGNN} (Multi-hop EGNN), '
+                             f'{MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED} (Multi-hop Frame-Aligned)')
     parser.add_argument('--hidden-dim', type=int, default=16,
                         help='Hidden dimension for the model')
     parser.add_argument('--n-layers', type=int, default=2,
@@ -873,12 +1170,13 @@ def parse_args():
     
     # Experiment mode
     parser.add_argument('--mode', type=str, default='full',
-                        choices=['main', 'control', 'statistical', 'bootstrap', 'full'],
+                        choices=['main', 'control', 'statistical', 'bootstrap', 'full', 'multi_hop'],
                         help='Experiment mode: main (single PV experiment), '
                              'control (parity-symmetric control), '
                              'statistical (multi-seed test), '
                              'bootstrap (single experiment with bootstrap CI), '
-                             'full (all experiments)')
+                             'full (all experiments), '
+                             'multi_hop (multi-hop experiment)')
     
     parser.add_argument('--quiet', action='store_true',
                         help='Suppress verbose output')
@@ -998,6 +1296,48 @@ if __name__ == '__main__':
             num_slots=args.num_slots,
             num_hops=args.num_hops
         )
+    
+    if args.mode == 'multi_hop':
+        # Run multi-hop experiment
+        print(f"\n[5] Multi-Hop Experiment")
+        print("-"*60)
+        multi_hop_results = run_multi_hop_experiment(
+            n_train=args.n_train,
+            n_val=args.n_val,
+            n_test=args.n_test,
+            n_nodes=args.n_nodes,
+            alpha=args.alpha,
+            graph_type=args.graph_type,
+            k=args.k,
+            r_max=args.r_max,
+            min_hops=args.min_hops,
+            max_hops=args.max_hops,
+            hidden_dim=args.hidden_dim,
+            n_layers=args.n_layers,
+            batch_size=args.batch_size,
+            n_epochs=args.n_epochs,
+            lr=args.lr,
+            seed=args.seed,
+            verbose=verbose,
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_delta=args.early_stopping_min_delta,
+            model_type=args.model_type,
+            num_slots=args.num_slots,
+            num_hops=args.num_hops
+        )
+        
+        # Print multi-hop summary
+        print("\n" + "="*60)
+        print("MULTI-HOP EXPERIMENT SUMMARY")
+        print("="*60)
+        print(f"Test accuracy: {multi_hop_results['test_accuracy']:.4f}")
+        print(f"Best val accuracy: {multi_hop_results['best_val_accuracy']:.4f}")
+        print(f"Epochs trained: {multi_hop_results['epochs_trained']}")
+        
+        if multi_hop_results['test_accuracy'] > 0.55:
+            print("\n✓ Model shows ability to detect parity violation in multi-hop setting")
+        else:
+            print("\n⚠ Model performance may need tuning for multi-hop setting")
     
     # Final summary
     print("\n" + "="*60)
