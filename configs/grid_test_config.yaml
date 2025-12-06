@@ -4,7 +4,7 @@
 # - Number of training+validation samples
 # - Parity violation fraction (f_pv)
 #
-# Use with: python -m experiments.grid_test --config grid_test_config.yaml
+# Use with: python -m experiments.grid_test --config configs/grid_test_config.yaml
 
 # Grid parameters
 # num_train_val: Total samples for training + validation
@@ -39,10 +39,10 @@ model_type: frame_aligned
 
 # Model parameters
 alpha: 0.3         # Parity violation angle offset
-hidden_dim: 16     # Hidden dimension for the model
+hidden_dim: 64     # Hidden dimension for the model
 n_layers: 2        # Number of message passing layers (for egnn)
-num_slots: 8       # Number of latent slots (for frame_aligned)
-num_hops: 2        # Number of message passing hops (for frame_aligned)
+num_slots: 32      # Number of latent slots (for frame_aligned)
+num_hops: 3        # Number of message passing hops (for frame_aligned)
 
 # Training parameters
 batch_size: 64

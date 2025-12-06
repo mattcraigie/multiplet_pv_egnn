@@ -51,10 +51,10 @@ def compare_models(
     f_pv: float = 0.05,
     n_seeds: int = 3,
     n_epochs: int = 50,
-    hidden_dim: int = 32,
+    hidden_dim: int = 64,
     n_layers: int = 2,
-    num_slots: int = 8,
-    num_hops: int = 2,
+    num_slots: int = 32,
+    num_hops: int = 3,
     alpha: float = 0.3,
     batch_size: int = 64,
     lr: float = 1e-3,
@@ -316,7 +316,7 @@ def parse_args():
                         help='Number of random seeds for averaging')
     parser.add_argument('--n-epochs', type=int, default=50,
                         help='Maximum number of training epochs')
-    parser.add_argument('--hidden-dim', type=int, default=32,
+    parser.add_argument('--hidden-dim', type=int, default=64,
                         help='Hidden dimension for both models')
     parser.add_argument('--early-stopping-patience', type=int, default=10,
                         help='Early stopping patience')

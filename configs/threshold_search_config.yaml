@@ -1,0 +1,59 @@
+# Threshold Search Configuration for Parity Violation Detection
+# 
+# This configuration file controls the threshold search to find detection boundaries:
+# - Finds the minimum f_pv required for detection at each dataset size
+# - Uses iterative binary search to localize the detection boundary
+#
+# Use with: python -m experiments.threshold_search --config configs/threshold_search_config.yaml
+
+# Dataset sizes to test (powers of 10)
+num_train_val:
+  - 100
+  - 1000
+  - 10000
+  - 100000
+
+# Search range for f_pv (fraction of pairs that are parity-violating)
+# For threshold search, we focus on the detection boundary region
+f_pv_min: 0.01
+f_pv_max: 0.2
+
+# Binary search parameters
+boundary_max_depth: 8   # Maximum depth of binary search refinement
+boundary_n_splits: 4    # Number of splits per refinement level
+
+# Train/validation split (0.8 means 80% train, 20% validation)
+train_val_split: 0.8
+
+# Fixed test set size for all experiments
+n_test: 100000
+
+# Model type: 'frame_aligned' (default) or 'egnn'
+# frame_aligned: Frame-Aligned GNN with latent slots (recommended)
+# egnn: Original EGNN-like classifier
+model_type: frame_aligned
+
+# Model parameters
+alpha: 0.3             # Parity violation angle offset
+hidden_dim: 64         # Hidden dimension for the model
+n_layers: 2            # Number of message passing layers (for egnn)
+num_slots: 32          # Number of latent slots (for frame_aligned)
+num_hops: 3            # Number of message passing hops (for frame_aligned)
+
+# Training parameters
+batch_size: 64
+n_epochs: 100          # Maximum number of epochs
+lr: 0.001              # Learning rate
+
+# Early stopping parameters
+early_stopping_patience: 10    # Stop after 10 epochs without improvement
+early_stopping_min_delta: 0.0001  # Minimum improvement threshold
+
+# Statistical test parameters
+n_bootstrap: 1000       # Number of bootstrap resamples
+confidence_level: 0.95  # 95% confidence level
+seed: 42               # Random seed for reproducibility
+
+# Output settings
+output_dir: threshold_search_results
+verbose: true

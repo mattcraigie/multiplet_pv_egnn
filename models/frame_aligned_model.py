@@ -227,9 +227,9 @@ class FrameAlignedPVClassifier(nn.Module):
     
     def __init__(
         self,
-        num_slots: int = 8,
-        hidden_dim: int = 32,
-        num_hops: int = 2,
+        num_slots: int = 32,
+        hidden_dim: int = 64,
+        num_hops: int = 3,
         readout_dim: int = 32
     ):
         """
@@ -342,8 +342,8 @@ class MultiHopFrameAlignedPVClassifier(nn.Module):
     
     def __init__(
         self,
-        num_slots: int = 8,
-        hidden_dim: int = 32,
+        num_slots: int = 32,
+        hidden_dim: int = 64,
         num_hops: int = 3,
         readout_dim: int = 32
     ):
