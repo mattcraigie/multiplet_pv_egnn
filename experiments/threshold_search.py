@@ -29,6 +29,7 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+from scipy.interpolate import griddata
 
 # Import from experiments package - works when running as a module (-m experiments.threshold_search)
 try:
@@ -405,8 +406,6 @@ def plot_confidence_heatmap(
         output_dir: Output directory for saving the plot
         figsize: Figure size
     """
-    from scipy.interpolate import griddata
-    
     tested_points = results.get('tested_points', [])
     if not tested_points:
         print("No tested points available for confidence heatmap")
