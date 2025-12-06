@@ -950,6 +950,212 @@ def plot_pv_structure(
     return fig, axes
 
 
+def plot_pv_comparison(
+    n_samples: int = 1000,
+    alpha: float = 0.3,
+    f_pv: float = 1.0,
+    seed: int = 42,
+    save_path: str = None,
+    figsize: tuple = (16, 10)
+):
+    """
+    Visualize parity violation comparison between real and symmetrized data.
+    
+    This visualization demonstrates that:
+    1. Individual pairs look identical between datasets (top row)
+    2. Only statistical aggregation reveals the difference (bottom row)
+    3. The signal is subtle but detectable through correlation analysis
+    
+    Args:
+        n_samples: Number of samples to generate
+        alpha: Parity violation angle offset
+        f_pv: Fraction of parity-violating pairs (1.0 = all PV)
+        seed: Random seed for reproducibility
+        save_path: Path to save the figure
+        figsize: Figure size
+        
+    Returns:
+        Figure and axes
+    """
+    # Generate dataset with both real (PV) and symmetrized samples
+    dataset = ParityViolationDataset(n_samples=n_samples, alpha=alpha, f_pv=f_pv, seed=seed)
+    
+    # Split into real (label=1) and symmetrized (label=0) samples
+    n_each = n_samples // 2
+    
+    # Real (parity-violating) samples
+    real_positions = dataset.positions_np[:n_each]
+    real_angles = dataset.angles_np[:n_each]
+    real_delta_z = dataset.edge_delta_zs[:n_each].numpy()
+    real_sin_2delta_phi = dataset.edge_sin_2delta_phis[:n_each].numpy()
+    
+    # Symmetrized samples
+    sym_positions = dataset.positions_np[n_each:]
+    sym_angles = dataset.angles_np[n_each:]
+    sym_delta_z = dataset.edge_delta_zs[n_each:].numpy()
+    sym_sin_2delta_phi = dataset.edge_sin_2delta_phis[n_each:].numpy()
+    
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+    
+    # ========================================
+    # Top Row: Individual Sample Comparison
+    # ========================================
+    
+    # Panel 1 (top-left): A few sample pairs from REAL data
+    ax1 = axes[0, 0]
+    n_show = 15
+    rng = np.random.default_rng(seed)
+    show_indices = rng.choice(n_each, size=n_show, replace=False)
+    
+    for i in show_indices:
+        p1 = real_positions[i, 0]
+        p2 = real_positions[i, 1]
+        color = 'red' if real_delta_z[i] > 0 else 'blue'
+        ax1.plot([p1[0], p2[0]], [p1[1], p2[1]], '-', color=color, alpha=0.4, linewidth=1)
+        
+        for pos, ang in [(p1, real_angles[i, 0]), (p2, real_angles[i, 1])]:
+            dx = 0.25 * np.cos(ang)
+            dy = 0.25 * np.sin(ang)
+            ax1.plot([pos[0]-dx, pos[0]+dx], [pos[1]-dy, pos[1]+dy], 
+                    color=color, linewidth=2.5, alpha=0.9)
+    
+    ax1.set_xlabel('x', fontsize=11)
+    ax1.set_ylabel('y', fontsize=11)
+    ax1.set_title('REAL (Parity-Violating) Samples\n(Red: Δz>0, Blue: Δz<0)', fontsize=11)
+    ax1.set_aspect('equal')
+    ax1.grid(True, alpha=0.3)
+    
+    # Panel 2 (top-center): A few sample pairs from SYMMETRIZED data
+    ax2 = axes[0, 1]
+    
+    for i in show_indices:
+        p1 = sym_positions[i, 0]
+        p2 = sym_positions[i, 1]
+        color = 'red' if sym_delta_z[i] > 0 else 'blue'
+        ax2.plot([p1[0], p2[0]], [p1[1], p2[1]], '-', color=color, alpha=0.4, linewidth=1)
+        
+        for pos, ang in [(p1, sym_angles[i, 0]), (p2, sym_angles[i, 1])]:
+            dx = 0.25 * np.cos(ang)
+            dy = 0.25 * np.sin(ang)
+            ax2.plot([pos[0]-dx, pos[0]+dx], [pos[1]-dy, pos[1]+dy], 
+                    color=color, linewidth=2.5, alpha=0.9)
+    
+    ax2.set_xlabel('x', fontsize=11)
+    ax2.set_ylabel('y', fontsize=11)
+    ax2.set_title('SYMMETRIZED Samples\n(Red: Δz>0, Blue: Δz<0)', fontsize=11)
+    ax2.set_aspect('equal')
+    ax2.grid(True, alpha=0.3)
+    
+    # Panel 3 (top-right): Explanation text
+    ax3 = axes[0, 2]
+    ax3.axis('off')
+    explanation_text = (
+        "Individual samples look IDENTICAL!\n\n"
+        "• Both datasets have pairs of points\n"
+        "• Both have random positions in 3D\n"
+        "• Both have spin-2 orientations\n\n"
+        "The difference is STATISTICAL:\n"
+        "• Real: orientations correlate with Δz\n"
+        "• Symmetrized: 50% are randomly flipped\n\n"
+        "This is why detection is non-trivial:\n"
+        "A human cannot tell them apart by eye!"
+    )
+    ax3.text(0.5, 0.5, explanation_text, transform=ax3.transAxes,
+             fontsize=12, verticalalignment='center', horizontalalignment='center',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
+             family='monospace')
+    ax3.set_title('Why is detection hard?', fontsize=11)
+    
+    # ========================================
+    # Bottom Row: Statistical Signal (Aggregated)
+    # ========================================
+    
+    # Panel 4 (bottom-left): sin(2Δφ) vs Δz for REAL data
+    ax4 = axes[1, 0]
+    colors_real = ['red' if dz > 0 else 'blue' for dz in real_delta_z]
+    ax4.scatter(real_delta_z, real_sin_2delta_phi, c=colors_real, alpha=0.3, s=15)
+    ax4.axhline(y=0, color='k', linestyle='--', alpha=0.4)
+    ax4.axvline(x=0, color='k', linestyle='--', alpha=0.4)
+    
+    # Add mean lines to show the correlation (with safety checks for empty arrays)
+    pos_mask_real = real_delta_z > 0
+    neg_mask_real = real_delta_z < 0
+    if np.any(pos_mask_real):
+        mean_pos = np.mean(real_sin_2delta_phi[pos_mask_real])
+        ax4.axhline(y=mean_pos, color='red', linestyle='-', alpha=0.8, linewidth=2,
+                   label=f'Mean (Δz>0): {mean_pos:.3f}')
+    if np.any(neg_mask_real):
+        mean_neg = np.mean(real_sin_2delta_phi[neg_mask_real])
+        ax4.axhline(y=mean_neg, color='blue', linestyle='-', alpha=0.8, linewidth=2,
+                   label=f'Mean (Δz<0): {mean_neg:.3f}')
+    
+    ax4.set_xlabel('Δz (line-of-sight separation)', fontsize=11)
+    ax4.set_ylabel('sin(2Δφ)', fontsize=11)
+    ax4.set_title('REAL: Clear Correlation!\n(sin(2Δφ) × Δz > 0)', fontsize=11, fontweight='bold')
+    ax4.legend(fontsize=9, loc='lower right')
+    ax4.grid(True, alpha=0.3)
+    ax4.set_ylim([-1.1, 1.1])
+    
+    # Panel 5 (bottom-center): sin(2Δφ) vs Δz for SYMMETRIZED data
+    ax5 = axes[1, 1]
+    colors_sym = ['red' if dz > 0 else 'blue' for dz in sym_delta_z]
+    ax5.scatter(sym_delta_z, sym_sin_2delta_phi, c=colors_sym, alpha=0.3, s=15)
+    ax5.axhline(y=0, color='k', linestyle='--', alpha=0.4)
+    ax5.axvline(x=0, color='k', linestyle='--', alpha=0.4)
+    
+    # Add mean lines (with safety checks for empty arrays)
+    pos_mask_sym = sym_delta_z > 0
+    neg_mask_sym = sym_delta_z < 0
+    if np.any(pos_mask_sym):
+        mean_pos_sym = np.mean(sym_sin_2delta_phi[pos_mask_sym])
+        ax5.axhline(y=mean_pos_sym, color='red', linestyle='-', alpha=0.8, linewidth=2,
+                   label=f'Mean (Δz>0): {mean_pos_sym:.3f}')
+    if np.any(neg_mask_sym):
+        mean_neg_sym = np.mean(sym_sin_2delta_phi[neg_mask_sym])
+        ax5.axhline(y=mean_neg_sym, color='blue', linestyle='-', alpha=0.8, linewidth=2,
+                   label=f'Mean (Δz<0): {mean_neg_sym:.3f}')
+    
+    ax5.set_xlabel('Δz (line-of-sight separation)', fontsize=11)
+    ax5.set_ylabel('sin(2Δφ)', fontsize=11)
+    ax5.set_title('SYMMETRIZED: No Correlation!\n(Random around zero)', fontsize=11, fontweight='bold')
+    ax5.legend(fontsize=9, loc='lower right')
+    ax5.grid(True, alpha=0.3)
+    ax5.set_ylim([-1.1, 1.1])
+    
+    # Panel 6 (bottom-right): Histogram comparison
+    ax6 = axes[1, 2]
+    
+    # Compute the signed correlation metric: sign(Δz) × sin(2Δφ)
+    real_metric = np.sign(real_delta_z) * real_sin_2delta_phi
+    sym_metric = np.sign(sym_delta_z) * sym_sin_2delta_phi
+    
+    bins = np.linspace(-1, 1, 31)
+    ax6.hist(real_metric, bins=bins, alpha=0.6, color='green', 
+             label=f'Real (mean={np.mean(real_metric):.3f})', density=True)
+    ax6.hist(sym_metric, bins=bins, alpha=0.6, color='gray', 
+             label=f'Symmetrized (mean={np.mean(sym_metric):.3f})', density=True)
+    
+    ax6.axvline(x=np.mean(real_metric), color='green', linestyle='-', linewidth=2)
+    ax6.axvline(x=np.mean(sym_metric), color='gray', linestyle='-', linewidth=2)
+    ax6.axvline(x=0, color='k', linestyle='--', alpha=0.5)
+    
+    ax6.set_xlabel('sign(Δz) × sin(2Δφ)', fontsize=11)
+    ax6.set_ylabel('Density', fontsize=11)
+    ax6.set_title('The Parity-Odd Statistic\n(Real shifted right, Sym. centered)', fontsize=11, fontweight='bold')
+    ax6.legend(fontsize=9)
+    ax6.grid(True, alpha=0.3)
+    
+    plt.suptitle(f'Parity Violation Detection: Real vs Symmetrized Data (α={alpha}, f_pv={f_pv})', 
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    return fig, axes
+
+
 def plot_training_convergence(
     train_losses: list,
     val_losses: list,
@@ -1054,9 +1260,19 @@ def generate_visualizations(output_dir: str = 'visualizations', verbose: bool = 
     if verbose:
         print("Generating visualizations for spin-2 parity violation experiment...")
     
-    # 1. Visualize PV dataset
+    # 1. Main visualization: Real vs Symmetrized comparison
     if verbose:
-        print("\n1. Visualizing parity-violating dataset...")
+        print("\n1. Visualizing parity violation comparison (real vs symmetrized)...")
+    plot_pv_comparison(
+        n_samples=1000,
+        alpha=0.3,
+        f_pv=1.0,
+        save_path=os.path.join(output_dir, 'pv_comparison.png')
+    )
+    
+    # 2. Visualize PV dataset
+    if verbose:
+        print("\n2. Visualizing parity-violating dataset...")
     plot_pv_dataset(
         n_samples=500,
         alpha=0.3,
@@ -1064,18 +1280,18 @@ def generate_visualizations(output_dir: str = 'visualizations', verbose: bool = 
         save_path=os.path.join(output_dir, 'pv_dataset.png')
     )
     
-    # 2. Visualize null test dataset
+    # 3. Visualize null test dataset
     if verbose:
-        print("\n2. Visualizing null test dataset...")
+        print("\n3. Visualizing null test dataset...")
     plot_null_dataset(
         n_samples=500,
         subset_size=60,
         save_path=os.path.join(output_dir, 'null_dataset.png')
     )
     
-    # 3. Visualize PV structure
+    # 4. Visualize PV structure
     if verbose:
-        print("\n3. Visualizing parity-violating structure...")
+        print("\n4. Visualizing parity-violating structure...")
     plot_pv_structure(
         n_samples=400,
         alpha=0.3,
