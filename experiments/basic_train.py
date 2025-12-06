@@ -1,30 +1,46 @@
 """
-Training module for the 3D parity violation EGNN classifier with spin-2 objects.
+Basic Training Experiment for 3D Parity Violation Detection.
 
-Implements:
+This module provides a basic training pipeline with visualization support for
+the Frame-Aligned GNN classifier on parity violation detection.
+
+Features:
 - Training loop with BCE loss
 - Validation and test evaluation
 - Accuracy and loss tracking
 - Bootstrap-based statistical test for parity violation detection
+- Visualization of dataset and training convergence
 
-Supports two model types:
-- 'egnn': Original EGNN-like classifier (from model.py)
-- 'frame_aligned': Frame-Aligned GNN classifier (from frame_aligned_model.py)
-
-And multi-hop versions:
-- 'multi_hop_egnn': Multi-hop EGNN classifier for variable-size graphs
-- 'multi_hop_frame_aligned': Multi-hop Frame-Aligned GNN classifier
+Usage:
+    python -m experiments.basic_train --mode full
+    python -m experiments.basic_train --mode main --visualize
 """
 
 import argparse
+import os
+import sys
+
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-import numpy as np
 
-from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
-from model import ParityViolationEGNN, MultiHopParityViolationEGNN
-from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
+# Import from parent package - these work when running as a module (-m experiments.basic_train)
+# or when the parent directory is in PYTHONPATH
+try:
+    from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
+    from model import ParityViolationEGNN, MultiHopParityViolationEGNN
+    from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
+except ImportError:
+    # Fallback for direct script execution
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
+    from model import ParityViolationEGNN, MultiHopParityViolationEGNN
+    from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
 
 
 # Model type constants
@@ -32,34 +48,22 @@ MODEL_TYPE_EGNN = 'egnn'
 MODEL_TYPE_FRAME_ALIGNED = 'frame_aligned'
 MODEL_TYPE_MULTI_HOP_EGNN = 'multi_hop_egnn'
 MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED = 'multi_hop_frame_aligned'
-# Default to the new Frame-Aligned model as requested.
-# Use --model-type egnn to use the original EGNN model.
+# Default to the new Frame-Aligned model
 DEFAULT_MODEL_TYPE = MODEL_TYPE_FRAME_ALIGNED
 
 
 # Seed generation constants for dataset independence
-# Each dataset (train, val, test) uses a different offset from base seed
-SEED_MULTIPLIER = 1000  # Multiplier to separate seed ranges
-SEED_OFFSET_TRAIN = 0   # Offset for training dataset
-SEED_OFFSET_VAL = 1     # Offset for validation dataset  
-SEED_OFFSET_TEST = 2    # Offset for test dataset
-SEED_OFFSET_BOOTSTRAP = 3  # Offset for bootstrap resampling
+SEED_MULTIPLIER = 1000
+SEED_OFFSET_TRAIN = 0
+SEED_OFFSET_VAL = 1
+SEED_OFFSET_TEST = 2
+SEED_OFFSET_BOOTSTRAP = 3
 
 
 def multi_hop_collate_fn(batch):
     """
     Custom collate function for multi-hop graphs with variable edge counts.
-    
-    Batches graphs together by concatenating node features and edge indices,
-    using a batch vector to track which nodes belong to which graph.
-    
-    Args:
-        batch: List of dictionaries from MultiHopParityViolationDataset
-        
-    Returns:
-        Dictionary with batched tensors
     """
-    # Initialize lists
     positions_list = []
     angles_list = []
     node_features_list = []
@@ -76,16 +80,9 @@ def multi_hop_collate_fn(batch):
         positions_list.append(sample['positions'])
         angles_list.append(sample['angles'])
         node_features_list.append(sample['node_features'])
-        
-        # Offset edge indices for batching
         edge_index_list.append(sample['edge_index'] + node_offset)
-        
-        # Offset special pair indices
         special_pair_list.append(sample['special_pair'] + node_offset)
-        
         labels_list.append(sample['label'])
-        
-        # Batch assignment
         batch_list.append(torch.full((n_nodes,), i, dtype=torch.long))
         
         node_offset += n_nodes
@@ -107,20 +104,7 @@ def is_multi_hop_model(model_type):
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device, model_type=DEFAULT_MODEL_TYPE):
-    """
-    Train for one epoch.
-    
-    Args:
-        model: The classifier
-        dataloader: Training dataloader
-        optimizer: Optimizer
-        criterion: Loss function (BCE)
-        device: Device to train on
-        model_type: Type of model ('egnn', 'frame_aligned', 'multi_hop_egnn', 'multi_hop_frame_aligned')
-        
-    Returns:
-        Average loss for the epoch
-    """
+    """Train for one epoch."""
     model.train()
     total_loss = 0.0
     n_batches = 0
@@ -153,7 +137,6 @@ def train_epoch(model, dataloader, optimizer, criterion, device, model_type=DEFA
             logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
         
         loss = criterion(logits, labels)
-        
         loss.backward()
         optimizer.step()
         
@@ -164,19 +147,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, model_type=DEFA
 
 
 def evaluate(model, dataloader, criterion, device, model_type=DEFAULT_MODEL_TYPE):
-    """
-    Evaluate the model.
-    
-    Args:
-        model: The classifier
-        dataloader: Evaluation dataloader
-        criterion: Loss function
-        device: Device to evaluate on
-        model_type: Type of model ('egnn', 'frame_aligned', 'multi_hop_egnn', 'multi_hop_frame_aligned')
-        
-    Returns:
-        Dictionary with loss and accuracy
-    """
+    """Evaluate the model."""
     model.eval()
     total_loss = 0.0
     correct = 0
@@ -210,10 +181,8 @@ def evaluate(model, dataloader, criterion, device, model_type=DEFAULT_MODEL_TYPE
                 logits = model(node_features, edge_distance_3d, edge_delta_z, edge_sin_2delta_phi)
             
             loss = criterion(logits, labels)
-            
             total_loss += loss.item() * len(labels)
             
-            # Compute accuracy
             predictions = (torch.sigmoid(logits) > 0.5).float()
             correct += (predictions == labels).sum().item()
             total += len(labels)
@@ -225,18 +194,9 @@ def evaluate(model, dataloader, criterion, device, model_type=DEFAULT_MODEL_TYPE
 
 
 class EarlyStopping:
-    """
-    Early stopping helper to track validation loss and stop training when loss converges.
-    """
+    """Early stopping helper to track validation loss and stop training when loss converges."""
     
     def __init__(self, patience: int = None, min_delta: float = 1e-4):
-        """
-        Initialize early stopping tracker.
-        
-        Args:
-            patience: Number of epochs to wait for improvement. If None, disabled.
-            min_delta: Minimum change in validation loss to qualify as improvement.
-        """
         self.patience = patience
         self.min_delta = min_delta
         self.best_loss = float('inf')
@@ -245,23 +205,12 @@ class EarlyStopping:
         self.enabled = patience is not None
     
     def __call__(self, val_loss: float, model) -> bool:
-        """
-        Check if training should stop.
-        
-        Args:
-            val_loss: Current validation loss
-            model: Model to save state from
-            
-        Returns:
-            True if training should stop, False otherwise
-        """
         if not self.enabled:
             return False
         
         if val_loss < self.best_loss - self.min_delta:
             self.best_loss = val_loss
             self.epochs_without_improvement = 0
-            # Save best model state
             self.best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
             return False
         else:
@@ -275,20 +224,7 @@ class EarlyStopping:
 
 
 def create_model(model_type, hidden_dim, n_layers, num_slots=8, num_hops=2, readout_dim=32):
-    """
-    Create a model based on the model type.
-    
-    Args:
-        model_type: 'egnn', 'frame_aligned', 'multi_hop_egnn', or 'multi_hop_frame_aligned'
-        hidden_dim: Hidden dimension for the model
-        n_layers: Number of message passing layers (for egnn)
-        num_slots: Number of latent slots (for frame_aligned)
-        num_hops: Number of message passing hops (for frame_aligned)
-        readout_dim: Readout dimension (for frame_aligned)
-        
-    Returns:
-        The model instance
-    """
+    """Create a model based on the model type."""
     if model_type == MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED:
         return MultiHopFrameAlignedPVClassifier(
             num_slots=num_slots,
@@ -337,35 +273,7 @@ def run_experiment(
     num_slots: int = 8,
     num_hops: int = 2
 ):
-    """
-    Run a complete training experiment.
-    
-    Args:
-        n_train: Number of training samples
-        n_val: Number of validation samples
-        n_test: Number of test samples
-        alpha: Parity violation parameter (default 0.3 for spin-2)
-        f_pv: Fraction of pairs that are parity-violating (0.0 to 1.0).
-              f_pv=1.0 means all pairs are PV (original behavior).
-              f_pv=0.0 means all pairs have random angles (no signal).
-        hidden_dim: Hidden dimension for the model
-        n_layers: Number of message passing layers
-        batch_size: Batch size for training
-        n_epochs: Number of training epochs
-        lr: Learning rate
-        seed: Random seed
-        verbose: Whether to print progress
-        early_stopping_patience: Number of epochs to wait for improvement before stopping.
-                                 If None, early stopping is disabled.
-        early_stopping_min_delta: Minimum change in validation loss to qualify as improvement.
-        model_type: Type of model ('egnn' or 'frame_aligned')
-        num_slots: Number of latent slots (for frame_aligned model)
-        num_hops: Number of message passing hops (for frame_aligned model)
-        
-    Returns:
-        Dictionary with final results and loss history
-    """
-    # Set seeds for reproducibility
+    """Run a complete training experiment."""
     torch.manual_seed(seed)
     np.random.seed(seed)
     
@@ -373,7 +281,7 @@ def run_experiment(
     if verbose:
         print(f"Using device: {device}")
     
-    # Create datasets (use well-separated seeds for independence)
+    # Create datasets
     train_dataset = ParityViolationDataset(n_train, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
     val_dataset = ParityViolationDataset(n_val, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
     test_dataset = ParityViolationDataset(n_test, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
@@ -382,170 +290,6 @@ def run_experiment(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    
-    # Create model based on model type
-    model = create_model(
-        model_type=model_type,
-        hidden_dim=hidden_dim,
-        n_layers=n_layers,
-        num_slots=num_slots,
-        num_hops=num_hops
-    ).to(device)
-    
-    if verbose:
-        print(f"Using model type: {model_type}")
-    
-    # Training setup
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.BCEWithLogitsLoss()
-    
-    # Loss history for visualization
-    train_losses = []
-    val_losses = []
-    val_accuracies = []
-    
-    # Early stopping
-    early_stopping = EarlyStopping(
-        patience=early_stopping_patience,
-        min_delta=early_stopping_min_delta
-    )
-    best_val_acc = 0.0
-    
-    # Training loop
-    for epoch in range(n_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, model_type)
-        val_metrics = evaluate(model, val_loader, criterion, device, model_type)
-        
-        train_losses.append(train_loss)
-        val_losses.append(val_metrics['loss'])
-        val_accuracies.append(val_metrics['accuracy'])
-        
-        if val_metrics['accuracy'] > best_val_acc:
-            best_val_acc = val_metrics['accuracy']
-        
-        # Early stopping check
-        if early_stopping(val_metrics['loss'], model):
-            if verbose:
-                print(f"Early stopping at epoch {epoch + 1} "
-                      f"(no improvement for {early_stopping_patience} epochs)")
-            early_stopping.restore_best_model(model)
-            break
-        
-        if verbose:
-            print(f"Epoch {epoch + 1:3d}: "
-                  f"Train Loss = {train_loss:.4f}, "
-                  f"Val Loss = {val_metrics['loss']:.4f}, "
-                  f"Val Acc = {val_metrics['accuracy']:.4f}")
-    
-    # Final evaluation on test set
-    test_metrics = evaluate(model, test_loader, criterion, device, model_type)
-    if verbose:
-        print(f"\nTest Results: "
-              f"Loss = {test_metrics['loss']:.4f}, "
-              f"Accuracy = {test_metrics['accuracy']:.4f}")
-    
-    return {
-        'test_loss': test_metrics['loss'],
-        'test_accuracy': test_metrics['accuracy'],
-        'best_val_accuracy': best_val_acc,
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'val_accuracies': val_accuracies,
-        'epochs_trained': len(train_losses)
-    }
-
-
-def run_multi_hop_experiment(
-    n_train: int = 4000,
-    n_val: int = 1000,
-    n_test: int = 1000,
-    n_nodes: int = 10,
-    alpha: float = 0.3,
-    graph_type: str = 'knn',
-    k: int = 3,
-    r_max: float = 3.0,
-    min_hops: int = 2,
-    max_hops: int = 4,
-    hidden_dim: int = 32,
-    n_layers: int = 3,
-    batch_size: int = 32,
-    n_epochs: int = 50,
-    lr: float = 1e-3,
-    seed: int = 42,
-    verbose: bool = True,
-    early_stopping_patience: int = 10,
-    early_stopping_min_delta: float = 1e-4,
-    model_type: str = MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED,
-    num_slots: int = 8,
-    num_hops: int = 3
-):
-    """
-    Run a training experiment with multi-hop parity violation dataset.
-    
-    Args:
-        n_train: Number of training samples
-        n_val: Number of validation samples
-        n_test: Number of test samples
-        n_nodes: Number of nodes per graph
-        alpha: Parity violation parameter
-        graph_type: 'knn' for k-nearest neighbors, 'radius' for radius graph
-        k: Number of neighbors for k-NN graph
-        r_max: Maximum radius for radius graph
-        min_hops: Minimum hops between special pair
-        max_hops: Maximum hops between special pair
-        hidden_dim: Hidden dimension for the model
-        n_layers: Number of message passing layers (for EGNN)
-        batch_size: Batch size for training
-        n_epochs: Number of training epochs
-        lr: Learning rate
-        seed: Random seed
-        verbose: Whether to print progress
-        early_stopping_patience: Number of epochs to wait for improvement before stopping
-        early_stopping_min_delta: Minimum change in validation loss to qualify as improvement
-        model_type: Type of model ('multi_hop_egnn' or 'multi_hop_frame_aligned')
-        num_slots: Number of latent slots (for frame_aligned model)
-        num_hops: Number of message passing hops (for frame_aligned model)
-        
-    Returns:
-        Dictionary with final results and loss history
-    """
-    # Set seeds for reproducibility
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if verbose:
-        print(f"Using device: {device}")
-        print(f"Running multi-hop experiment with {n_nodes} nodes per graph")
-        print(f"Graph type: {graph_type}, min_hops={min_hops}, max_hops={max_hops}")
-    
-    # Create datasets
-    train_dataset = MultiHopParityViolationDataset(
-        n_samples=n_train, n_nodes=n_nodes, alpha=alpha,
-        graph_type=graph_type, k=k, r_max=r_max,
-        min_hops=min_hops, max_hops=max_hops,
-        seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN
-    )
-    val_dataset = MultiHopParityViolationDataset(
-        n_samples=n_val, n_nodes=n_nodes, alpha=alpha,
-        graph_type=graph_type, k=k, r_max=r_max,
-        min_hops=min_hops, max_hops=max_hops,
-        seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL
-    )
-    test_dataset = MultiHopParityViolationDataset(
-        n_samples=n_test, n_nodes=n_nodes, alpha=alpha,
-        graph_type=graph_type, k=k, r_max=r_max,
-        min_hops=min_hops, max_hops=max_hops,
-        seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST
-    )
-    
-    if verbose:
-        print(f"Dataset sizes: train={len(train_dataset)}, val={len(val_dataset)}, test={len(test_dataset)}")
-    
-    # Create dataloaders with custom collate function
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=multi_hop_collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, collate_fn=multi_hop_collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, collate_fn=multi_hop_collate_fn)
     
     # Create model
     model = create_model(
@@ -587,7 +331,6 @@ def run_multi_hop_experiment(
         if val_metrics['accuracy'] > best_val_acc:
             best_val_acc = val_metrics['accuracy']
         
-        # Early stopping check
         if early_stopping(val_metrics['loss'], model):
             if verbose:
                 print(f"Early stopping at epoch {epoch + 1} "
@@ -601,7 +344,7 @@ def run_multi_hop_experiment(
                   f"Val Loss = {val_metrics['loss']:.4f}, "
                   f"Val Acc = {val_metrics['accuracy']:.4f}")
     
-    # Final evaluation on test set
+    # Final evaluation
     test_metrics = evaluate(model, test_loader, criterion, device, model_type)
     if verbose:
         print(f"\nTest Results: "
@@ -634,17 +377,7 @@ def run_control_experiment(
     num_slots: int = 8,
     num_hops: int = 2
 ):
-    """
-    Run control experiment with parity-symmetric data.
-    
-    This should yield ~0.5 accuracy (random guessing).
-    
-    Args:
-        Same as run_experiment except no alpha parameter
-        
-    Returns:
-        Dictionary with final results and loss history
-    """
+    """Run control experiment with parity-symmetric data."""
     torch.manual_seed(seed)
     np.random.seed(seed)
     
@@ -653,7 +386,7 @@ def run_control_experiment(
         print(f"Using device: {device}")
         print("Running CONTROL experiment (no parity violation)")
     
-    # Create parity-symmetric datasets (use well-separated seeds for independence)
+    # Create parity-symmetric datasets
     train_dataset = ParitySymmetricDataset(n_train, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
     val_dataset = ParitySymmetricDataset(n_val, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
     test_dataset = ParitySymmetricDataset(n_test, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
@@ -663,7 +396,7 @@ def run_control_experiment(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model based on model type
+    # Create model
     model = create_model(
         model_type=model_type,
         hidden_dim=hidden_dim,
@@ -679,7 +412,7 @@ def run_control_experiment(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
     
-    # Loss history for visualization
+    # Loss history
     train_losses = []
     val_losses = []
     val_accuracies = []
@@ -729,22 +462,7 @@ def run_statistical_test(
     num_slots: int = 8,
     num_hops: int = 2
 ):
-    """
-    Run multiple experiments with different seeds for statistical robustness.
-    
-    Args:
-        n_seeds: Number of random seeds to try
-        n_train: Training samples per experiment
-        n_val: Validation samples per experiment
-        n_test: Test samples per experiment
-        alpha: Parity violation parameter
-        f_pv: Fraction of pairs that are parity-violating (0.0 to 1.0)
-        n_epochs: Epochs per experiment
-        verbose: Print progress
-        
-    Returns:
-        Dictionary with mean and std of test accuracies
-    """
+    """Run multiple experiments with different seeds for statistical robustness."""
     if verbose:
         print(f"\n{'='*60}")
         print(f"Running statistical test with {n_seeds} seeds")
@@ -803,37 +521,10 @@ def bootstrap_confidence_test(
     model_type: str = DEFAULT_MODEL_TYPE
 ):
     """
-    Perform bootstrap resampling to compute confidence intervals for accuracy
-    and determine if parity violation is detected with statistical significance.
-    
-    This test bootstraps over the predictions on validation/test data to understand
-    the uncertainty in our accuracy estimate and determine confidence that the
-    field violates parity.
-    
-    Args:
-        model: Trained classifier
-        dataloader: DataLoader for evaluation data
-        device: Device to evaluate on
-        n_bootstrap: Number of bootstrap resamples
-        confidence_level: Confidence level for interval (e.g., 0.95 for 95%)
-        null_accuracy: Null hypothesis accuracy (0.5 for no parity violation)
-        bootstrap_seed: Random seed for bootstrap resampling (None for random)
-        verbose: Whether to print results
-        model_type: Type of model ('egnn', 'frame_aligned', 'multi_hop_egnn', 'multi_hop_frame_aligned')
-        
-    Returns:
-        Dictionary with:
-        - accuracy: Point estimate of accuracy
-        - ci_lower: Lower bound of confidence interval
-        - ci_upper: Upper bound of confidence interval
-        - confidence_level: The confidence level used
-        - p_value: P-value for rejecting null hypothesis (accuracy = null_accuracy)
-        - parity_violation_detected: Boolean indicating significant detection
-        - detection_confidence: Confidence level at which parity violation is detected
+    Perform bootstrap resampling to compute confidence intervals for accuracy.
     """
     model.eval()
     
-    # Collect all predictions and labels
     all_predictions = []
     all_labels = []
     
@@ -873,37 +564,27 @@ def bootstrap_confidence_test(
     all_labels = np.array(all_labels)
     n_samples = len(all_predictions)
     
-    # Compute point estimate
     correct = (all_predictions == all_labels).astype(float)
     point_accuracy = np.mean(correct)
     
-    # Bootstrap resampling
     rng = np.random.default_rng(bootstrap_seed)
     bootstrap_accuracies = []
     
     for _ in range(n_bootstrap):
-        # Resample with replacement
         indices = rng.choice(n_samples, size=n_samples, replace=True)
         bootstrap_correct = correct[indices]
         bootstrap_accuracies.append(np.mean(bootstrap_correct))
     
     bootstrap_accuracies = np.array(bootstrap_accuracies)
     
-    # Compute confidence interval using percentile method
     alpha = 1 - confidence_level
     ci_lower = np.percentile(bootstrap_accuracies, 100 * alpha / 2)
     ci_upper = np.percentile(bootstrap_accuracies, 100 * (1 - alpha / 2))
     
-    # Compute p-value for one-sided test (accuracy > null_accuracy)
-    # Using bootstrap distribution centered at null
     bootstrap_centered = bootstrap_accuracies - point_accuracy + null_accuracy
     p_value = np.mean(bootstrap_centered >= point_accuracy)
     
-    # Determine at what confidence level parity violation is detected
-    # (what percentage of bootstrap samples have accuracy > null_accuracy)
     detection_confidence = np.mean(bootstrap_accuracies > null_accuracy)
-    
-    # Determine if parity violation is detected at specified confidence level
     parity_violation_detected = ci_lower > null_accuracy
     
     if verbose:
@@ -963,36 +644,7 @@ def run_bootstrap_statistical_test(
 ):
     """
     Train a model and perform bootstrap statistical test for parity violation.
-    
-    This combines training with bootstrap-based confidence interval estimation
-    to provide a rigorous statistical statement about parity violation detection.
-    
-    Args:
-        n_train: Number of training samples
-        n_val: Number of validation samples
-        n_test: Number of test samples
-        alpha: Parity violation parameter
-        f_pv: Fraction of pairs that are parity-violating (0.0 to 1.0)
-        hidden_dim: Hidden dimension for the model
-        n_layers: Number of message passing layers
-        batch_size: Batch size for training
-        n_epochs: Number of training epochs
-        lr: Learning rate
-        seed: Random seed
-        n_bootstrap: Number of bootstrap resamples
-        confidence_level: Confidence level for interval
-        verbose: Whether to print progress
-        early_stopping_patience: Number of epochs to wait for improvement before stopping.
-                                 If None, early stopping is disabled.
-        early_stopping_min_delta: Minimum change in validation loss to qualify as improvement.
-        model_type: Type of model ('egnn' or 'frame_aligned')
-        num_slots: Number of latent slots (for frame_aligned model)
-        num_hops: Number of message passing hops (for frame_aligned model)
-        
-    Returns:
-        Dictionary with training results and bootstrap test results
     """
-    # Set seeds for reproducibility
     torch.manual_seed(seed)
     np.random.seed(seed)
     
@@ -1001,7 +653,7 @@ def run_bootstrap_statistical_test(
         print(f"Using device: {device}")
         print(f"Using model type: {model_type}")
     
-    # Create datasets (use well-separated seeds for independence)
+    # Create datasets
     train_dataset = ParityViolationDataset(n_train, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TRAIN)
     val_dataset = ParityViolationDataset(n_val, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_VAL)
     test_dataset = ParityViolationDataset(n_test, alpha=alpha, f_pv=f_pv, seed=seed * SEED_MULTIPLIER + SEED_OFFSET_TEST)
@@ -1011,7 +663,7 @@ def run_bootstrap_statistical_test(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Create model based on model type
+    # Create model
     model = create_model(
         model_type=model_type,
         hidden_dim=hidden_dim,
@@ -1024,12 +676,11 @@ def run_bootstrap_statistical_test(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
     
-    # Training loop with early stopping
+    # Training loop
     train_losses = []
     val_losses = []
     val_accuracies = []
     
-    # Early stopping
     early_stopping = EarlyStopping(
         patience=early_stopping_patience,
         min_delta=early_stopping_min_delta
@@ -1043,7 +694,6 @@ def run_bootstrap_statistical_test(
         val_losses.append(val_metrics['loss'])
         val_accuracies.append(val_metrics['accuracy'])
         
-        # Early stopping check
         if early_stopping(val_metrics['loss'], model):
             if verbose:
                 print(f"Early stopping at epoch {epoch + 1} "
@@ -1057,11 +707,10 @@ def run_bootstrap_statistical_test(
                   f"Val Loss = {val_metrics['loss']:.4f}, "
                   f"Val Acc = {val_metrics['accuracy']:.4f}")
     
-    # Perform bootstrap statistical test on test set
+    # Perform bootstrap statistical test
     if verbose:
         print("\nPerforming bootstrap statistical test on test set...")
     
-    # Use a derived seed for bootstrap resampling to ensure independence
     bootstrap_seed = seed * SEED_MULTIPLIER + SEED_OFFSET_BOOTSTRAP
     
     bootstrap_results = bootstrap_confidence_test(
@@ -1089,10 +738,360 @@ def run_bootstrap_statistical_test(
     }
 
 
+# ==============================================================================
+# Visualization Functions
+# ==============================================================================
+
+def plot_spin2_orientations(
+    positions: np.ndarray,
+    angles: np.ndarray,
+    labels: np.ndarray = None,
+    title: str = "Spin-2 Point Cloud",
+    line_length: float = 0.3,
+    figsize: tuple = (10, 8),
+    cmap: str = 'coolwarm',
+    save_path: str = None,
+    show_colorbar: bool = True,
+    subset_size: int = None,
+    seed: int = 42
+):
+    """Visualize spin-2 orientations as line segments on a 2D point cloud."""
+    n_samples = positions.shape[0]
+    
+    if subset_size is not None and subset_size < n_samples:
+        rng = np.random.default_rng(seed)
+        indices = rng.choice(n_samples, size=subset_size, replace=False)
+        positions = positions[indices]
+        angles = angles[indices]
+        if labels is not None:
+            labels = labels[indices]
+        n_samples = subset_size
+    
+    x = positions[:, :, 0].flatten()
+    y = positions[:, :, 1].flatten()
+    z = positions[:, :, 2].flatten()
+    phi = angles.flatten()
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    z_min, z_max = z.min(), z.max()
+    norm = Normalize(vmin=z_min, vmax=z_max)
+    colormap = cm.get_cmap(cmap)
+    
+    half_len = line_length / 2
+    
+    segments = []
+    colors = []
+    
+    for i in range(len(x)):
+        dx = half_len * np.cos(phi[i])
+        dy = half_len * np.sin(phi[i])
+        
+        x0, y0 = x[i] - dx, y[i] - dy
+        x1, y1 = x[i] + dx, y[i] + dy
+        
+        segments.append([(x0, y0), (x1, y1)])
+        colors.append(colormap(norm(z[i])))
+    
+    lc = LineCollection(segments, colors=colors, linewidths=1.5, alpha=0.8)
+    ax.add_collection(lc)
+    
+    scatter = ax.scatter(x, y, c=z, cmap=cmap, s=15, alpha=0.6, edgecolors='none')
+    
+    if show_colorbar:
+        cbar = plt.colorbar(scatter, ax=ax, label='z (line-of-sight)')
+        cbar.ax.tick_params(labelsize=10)
+    
+    for i in range(n_samples):
+        p1 = positions[i, 0, :2]
+        p2 = positions[i, 1, :2]
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], 'k-', alpha=0.1, linewidth=0.5)
+    
+    ax.set_xlabel('x', fontsize=12)
+    ax.set_ylabel('y', fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.set_aspect('equal')
+    ax.autoscale_view()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    return fig, ax
+
+
+def plot_pv_dataset(
+    n_samples: int = 500,
+    alpha: float = 0.3,
+    seed: int = 42,
+    subset_size: int = 50,
+    save_path: str = None,
+    **kwargs
+):
+    """Visualize the parity-violating dataset."""
+    dataset = ParityViolationDataset(n_samples=n_samples, alpha=alpha, seed=seed)
+    
+    n_pv = n_samples // 2
+    positions = dataset.positions_np[:n_pv]
+    angles = dataset.angles_np[:n_pv]
+    labels = dataset.labels[:n_pv].numpy()
+    
+    return plot_spin2_orientations(
+        positions=positions,
+        angles=angles,
+        labels=labels,
+        title=f"Parity-Violating Dataset (α={alpha}, spin-2)\nLine segments show orientation, color shows z-depth",
+        subset_size=subset_size,
+        seed=seed,
+        save_path=save_path,
+        **kwargs
+    )
+
+
+def plot_null_dataset(
+    n_samples: int = 500,
+    seed: int = 42,
+    subset_size: int = 50,
+    save_path: str = None,
+    **kwargs
+):
+    """Visualize the parity-symmetric (null test) dataset."""
+    dataset = ParitySymmetricDataset(n_samples=n_samples, seed=seed)
+    
+    n_half = n_samples // 2
+    positions = dataset.positions_np[:n_half]
+    angles = dataset.angles_np[:n_half]
+    labels = dataset.labels[:n_half].numpy()
+    
+    return plot_spin2_orientations(
+        positions=positions,
+        angles=angles,
+        labels=labels,
+        title="Null Test Dataset (no parity violation, spin-2)\nLine segments show orientation, color shows z-depth",
+        subset_size=subset_size,
+        seed=seed,
+        save_path=save_path,
+        **kwargs
+    )
+
+
+def plot_pv_structure(
+    n_samples: int = 200,
+    alpha: float = 0.3,
+    seed: int = 42,
+    save_path: str = None,
+    figsize: tuple = (14, 5)
+):
+    """Visualize the parity-violating structure by showing pairs color-coded by delta_z sign."""
+    dataset = ParityViolationDataset(n_samples=n_samples, alpha=alpha, seed=seed)
+    
+    n_pv = n_samples // 2
+    positions = dataset.positions_np[:n_pv]
+    angles = dataset.angles_np[:n_pv]
+    delta_z = dataset.edge_delta_zs[:n_pv].numpy()
+    sin_2delta_phi = dataset.edge_sin_2delta_phis[:n_pv].numpy()
+    
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    
+    # Plot 1: sin(2Δφ) vs delta_z
+    ax1 = axes[0]
+    colors = ['red' if dz > 0 else 'blue' for dz in delta_z]
+    ax1.scatter(delta_z, sin_2delta_phi, c=colors, alpha=0.5, s=30)
+    ax1.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+    ax1.axvline(x=0, color='k', linestyle='--', alpha=0.3)
+    ax1.set_xlabel('Δz (z₂ - z₁)', fontsize=12)
+    ax1.set_ylabel('sin(2Δφ)', fontsize=12)
+    ax1.set_title('Parity-Violating Correlation\n(sin(2Δφ) × Δz > 0 expected)', fontsize=11)
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Histogram
+    ax2 = axes[1]
+    positive_dz = sin_2delta_phi[delta_z > 0]
+    negative_dz = sin_2delta_phi[delta_z < 0]
+    ax2.hist(positive_dz, bins=30, alpha=0.6, color='red', label=f'Δz > 0 (n={len(positive_dz)})')
+    ax2.hist(negative_dz, bins=30, alpha=0.6, color='blue', label=f'Δz < 0 (n={len(negative_dz)})')
+    ax2.axvline(x=0, color='k', linestyle='--', alpha=0.5)
+    ax2.set_xlabel('sin(2Δφ)', fontsize=12)
+    ax2.set_ylabel('Count', fontsize=12)
+    ax2.set_title('Distribution of sin(2Δφ) by Δz sign', fontsize=11)
+    ax2.legend(fontsize=10)
+    ax2.grid(True, alpha=0.3)
+    
+    # Plot 3: Sample pairs
+    ax3 = axes[2]
+    n_show = min(30, n_pv)
+    for i in range(n_show):
+        p1 = positions[i, 0]
+        p2 = positions[i, 1]
+        color = 'red' if delta_z[i] > 0 else 'blue'
+        ax3.plot([p1[0], p2[0]], [p1[1], p2[1]], '-', color=color, alpha=0.5, linewidth=1)
+        
+        for j, (pos, ang) in enumerate([(p1, angles[i, 0]), (p2, angles[i, 1])]):
+            dx = 0.2 * np.cos(ang)
+            dy = 0.2 * np.sin(ang)
+            ax3.plot([pos[0]-dx, pos[0]+dx], [pos[1]-dy, pos[1]+dy], 
+                    color=color, linewidth=2, alpha=0.8)
+    
+    ax3.set_xlabel('x', fontsize=12)
+    ax3.set_ylabel('y', fontsize=12)
+    ax3.set_title(f'Sample Pairs (n={n_show})\nRed: Δz>0, Blue: Δz<0', fontsize=11)
+    ax3.set_aspect('equal')
+    ax3.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    return fig, axes
+
+
+def plot_training_convergence(
+    train_losses: list,
+    val_losses: list,
+    val_accuracies: list = None,
+    title: str = "Training Convergence",
+    save_path: str = None,
+    figsize: tuple = (12, 4)
+):
+    """Plot training loss convergence over epochs."""
+    epochs = range(1, len(train_losses) + 1)
+    
+    n_plots = 2 if val_accuracies is not None else 1
+    fig, axes = plt.subplots(1, n_plots, figsize=figsize)
+    
+    if n_plots == 1:
+        axes = [axes]
+    
+    ax1 = axes[0]
+    ax1.plot(epochs, train_losses, 'b-o', label='Train Loss', markersize=4)
+    ax1.plot(epochs, val_losses, 'r-o', label='Val Loss', markersize=4)
+    ax1.set_xlabel('Epoch', fontsize=12)
+    ax1.set_ylabel('Loss (BCE)', fontsize=12)
+    ax1.set_title('Loss vs Epoch', fontsize=12)
+    ax1.legend(fontsize=10)
+    ax1.grid(True, alpha=0.3)
+    
+    if val_accuracies is not None:
+        ax2 = axes[1]
+        ax2.plot(epochs, val_accuracies, 'g-o', label='Val Accuracy', markersize=4)
+        ax2.axhline(y=0.5, color='k', linestyle='--', alpha=0.5, label='Random (0.5)')
+        ax2.set_xlabel('Epoch', fontsize=12)
+        ax2.set_ylabel('Accuracy', fontsize=12)
+        ax2.set_title('Validation Accuracy vs Epoch', fontsize=12)
+        ax2.set_ylim([0.4, 1.0])
+        ax2.legend(fontsize=10)
+        ax2.grid(True, alpha=0.3)
+    
+    plt.suptitle(title, fontsize=14)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    return fig, axes
+
+
+def plot_comparison(
+    pv_results: dict,
+    control_results: dict,
+    save_path: str = None,
+    figsize: tuple = (14, 5)
+):
+    """Compare training convergence between PV and control experiments."""
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    
+    epochs = range(1, len(pv_results['train_losses']) + 1)
+    
+    ax1 = axes[0]
+    ax1.plot(epochs, pv_results['train_losses'], 'b-', label='PV Train', linewidth=2)
+    ax1.plot(epochs, control_results['train_losses'], 'r--', label='Control Train', linewidth=2)
+    ax1.set_xlabel('Epoch', fontsize=12)
+    ax1.set_ylabel('Training Loss', fontsize=12)
+    ax1.set_title('Training Loss Comparison', fontsize=12)
+    ax1.legend(fontsize=10)
+    ax1.grid(True, alpha=0.3)
+    
+    ax2 = axes[1]
+    ax2.plot(epochs, pv_results['val_losses'], 'b-', label='PV Val', linewidth=2)
+    ax2.plot(epochs, control_results['val_losses'], 'r--', label='Control Val', linewidth=2)
+    ax2.set_xlabel('Epoch', fontsize=12)
+    ax2.set_ylabel('Validation Loss', fontsize=12)
+    ax2.set_title('Validation Loss Comparison', fontsize=12)
+    ax2.legend(fontsize=10)
+    ax2.grid(True, alpha=0.3)
+    
+    ax3 = axes[2]
+    ax3.plot(epochs, pv_results['val_accuracies'], 'b-', label='PV Accuracy', linewidth=2)
+    ax3.plot(epochs, control_results['val_accuracies'], 'r--', label='Control Accuracy', linewidth=2)
+    ax3.axhline(y=0.5, color='k', linestyle=':', alpha=0.5, label='Random (0.5)')
+    ax3.set_xlabel('Epoch', fontsize=12)
+    ax3.set_ylabel('Validation Accuracy', fontsize=12)
+    ax3.set_title('Accuracy Comparison', fontsize=12)
+    ax3.set_ylim([0.35, 1.0])
+    ax3.legend(fontsize=10)
+    ax3.grid(True, alpha=0.3)
+    
+    plt.suptitle('PV Detection vs Null Test Comparison (Spin-2)', fontsize=14)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    return fig, axes
+
+
+def generate_visualizations(output_dir: str = 'visualizations', verbose: bool = True):
+    """Generate all visualizations for the experiment."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    if verbose:
+        print("Generating visualizations for spin-2 parity violation experiment...")
+    
+    # 1. Visualize PV dataset
+    if verbose:
+        print("\n1. Visualizing parity-violating dataset...")
+    plot_pv_dataset(
+        n_samples=500,
+        alpha=0.3,
+        subset_size=60,
+        save_path=os.path.join(output_dir, 'pv_dataset.png')
+    )
+    
+    # 2. Visualize null test dataset
+    if verbose:
+        print("\n2. Visualizing null test dataset...")
+    plot_null_dataset(
+        n_samples=500,
+        subset_size=60,
+        save_path=os.path.join(output_dir, 'null_dataset.png')
+    )
+    
+    # 3. Visualize PV structure
+    if verbose:
+        print("\n3. Visualizing parity-violating structure...")
+    plot_pv_structure(
+        n_samples=400,
+        alpha=0.3,
+        save_path=os.path.join(output_dir, 'pv_structure.png')
+    )
+    
+    plt.close('all')
+    
+    if verbose:
+        print(f"\nAll visualizations saved to '{output_dir}/' directory")
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Train classifier for 3D parity violation detection',
+        description='Basic training for 3D parity violation detection',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
@@ -1106,34 +1105,13 @@ def parse_args():
     parser.add_argument('--alpha', type=float, default=0.3,
                         help='Parity violation parameter (angle offset)')
     parser.add_argument('--f-pv', type=float, default=1.0,
-                        help='Fraction of pairs that are parity-violating (0.0 to 1.0). '
-                             'f_pv=1.0 means all pairs are PV (original behavior). '
-                             'f_pv=0.0 means all pairs have random angles (no signal). '
-                             'Expected accuracy scales as 0.5 + f_pv/4.')
-    
-    # Multi-hop data parameters
-    parser.add_argument('--n-nodes', type=int, default=10,
-                        help='Number of nodes per graph (for multi-hop models)')
-    parser.add_argument('--graph-type', type=str, default='knn',
-                        choices=['knn', 'radius'],
-                        help='Graph construction type: knn or radius')
-    parser.add_argument('--k', type=int, default=3,
-                        help='Number of neighbors for k-NN graph')
-    parser.add_argument('--r-max', type=float, default=3.0,
-                        help='Maximum radius for radius graph')
-    parser.add_argument('--min-hops', type=int, default=2,
-                        help='Minimum hops between special pair')
-    parser.add_argument('--max-hops', type=int, default=4,
-                        help='Maximum hops between special pair')
+                        help='Fraction of pairs that are parity-violating (0.0 to 1.0)')
     
     # Model parameters
     parser.add_argument('--model-type', type=str, default=DEFAULT_MODEL_TYPE,
                         choices=[MODEL_TYPE_EGNN, MODEL_TYPE_FRAME_ALIGNED,
                                  MODEL_TYPE_MULTI_HOP_EGNN, MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED],
-                        help=f'Model type: {MODEL_TYPE_EGNN} (original EGNN), '
-                             f'{MODEL_TYPE_FRAME_ALIGNED} (Frame-Aligned GNN), '
-                             f'{MODEL_TYPE_MULTI_HOP_EGNN} (Multi-hop EGNN), '
-                             f'{MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED} (Multi-hop Frame-Aligned)')
+                        help='Model type')
     parser.add_argument('--hidden-dim', type=int, default=16,
                         help='Hidden dimension for the model')
     parser.add_argument('--n-layers', type=int, default=2,
@@ -1153,30 +1131,30 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility')
     
-    # Early stopping parameters
+    # Early stopping
     parser.add_argument('--early-stopping-patience', type=int, default=None,
-                        help='Number of epochs to wait for improvement before stopping. '
-                             'If not provided, early stopping is disabled.')
+                        help='Early stopping patience')
     parser.add_argument('--early-stopping-min-delta', type=float, default=1e-4,
-                        help='Minimum change in validation loss to qualify as improvement.')
+                        help='Minimum improvement for early stopping')
     
     # Statistical test parameters
     parser.add_argument('--n-seeds', type=int, default=5,
                         help='Number of seeds for multi-seed statistical test')
     parser.add_argument('--n-bootstrap', type=int, default=1000,
-                        help='Number of bootstrap resamples for confidence intervals')
+                        help='Number of bootstrap resamples')
     parser.add_argument('--confidence-level', type=float, default=0.95,
-                        help='Confidence level for bootstrap intervals (e.g., 0.95 for 95 percent)')
+                        help='Confidence level for bootstrap intervals')
     
     # Experiment mode
     parser.add_argument('--mode', type=str, default='full',
-                        choices=['main', 'control', 'statistical', 'bootstrap', 'full', 'multi_hop'],
-                        help='Experiment mode: main (single PV experiment), '
-                             'control (parity-symmetric control), '
-                             'statistical (multi-seed test), '
-                             'bootstrap (single experiment with bootstrap CI), '
-                             'full (all experiments), '
-                             'multi_hop (multi-hop experiment)')
+                        choices=['main', 'control', 'statistical', 'bootstrap', 'full'],
+                        help='Experiment mode')
+    
+    # Visualization
+    parser.add_argument('--visualize', action='store_true',
+                        help='Generate visualizations')
+    parser.add_argument('--output-dir', type=str, default='visualizations',
+                        help='Output directory for visualizations')
     
     parser.add_argument('--quiet', action='store_true',
                         help='Suppress verbose output')
@@ -1204,13 +1182,16 @@ if __name__ == '__main__':
         print(f"  batch_size={args.batch_size}, n_epochs={args.n_epochs}, lr={args.lr}")
         print(f"  seed={args.seed}, mode={args.mode}")
     
+    # Generate visualizations if requested
+    if args.visualize:
+        generate_visualizations(output_dir=args.output_dir, verbose=verbose)
+    
     results = None
     control_results = None
     stats = None
     bootstrap_results = None
     
     if args.mode in ['main', 'full']:
-        # Run main experiment with parity violation
         print(f"\n[1] Main Experiment (with 3D parity violation, α={args.alpha}, f_pv={args.f_pv})")
         print("-"*60)
         results = run_experiment(
@@ -1234,7 +1215,6 @@ if __name__ == '__main__':
         )
     
     if args.mode in ['control', 'full']:
-        # Run control experiment without parity violation
         print("\n[2] Control Experiment (no parity violation)")
         print("-"*60)
         control_results = run_control_experiment(
@@ -1254,7 +1234,6 @@ if __name__ == '__main__':
         )
     
     if args.mode in ['statistical', 'full']:
-        # Run statistical test with multiple seeds
         print(f"\n[3] Statistical Test ({args.n_seeds} seeds)")
         print("-"*60)
         stats = run_statistical_test(
@@ -1272,7 +1251,6 @@ if __name__ == '__main__':
         )
     
     if args.mode in ['bootstrap', 'full']:
-        # Run bootstrap statistical test
         print(f"\n[4] Bootstrap Statistical Test (n_bootstrap={args.n_bootstrap})")
         print("-"*60)
         bootstrap_results = run_bootstrap_statistical_test(
@@ -1297,47 +1275,25 @@ if __name__ == '__main__':
             num_hops=args.num_hops
         )
     
-    if args.mode == 'multi_hop':
-        # Run multi-hop experiment
-        print(f"\n[5] Multi-Hop Experiment")
-        print("-"*60)
-        multi_hop_results = run_multi_hop_experiment(
-            n_train=args.n_train,
-            n_val=args.n_val,
-            n_test=args.n_test,
-            n_nodes=args.n_nodes,
-            alpha=args.alpha,
-            graph_type=args.graph_type,
-            k=args.k,
-            r_max=args.r_max,
-            min_hops=args.min_hops,
-            max_hops=args.max_hops,
-            hidden_dim=args.hidden_dim,
-            n_layers=args.n_layers,
-            batch_size=args.batch_size,
-            n_epochs=args.n_epochs,
-            lr=args.lr,
-            seed=args.seed,
-            verbose=verbose,
-            early_stopping_patience=args.early_stopping_patience,
-            early_stopping_min_delta=args.early_stopping_min_delta,
-            model_type=args.model_type,
-            num_slots=args.num_slots,
-            num_hops=args.num_hops
+    # Generate training comparison visualization if both main and control ran
+    if args.visualize and results is not None and control_results is not None:
+        os.makedirs(args.output_dir, exist_ok=True)
+        
+        plot_training_convergence(
+            train_losses=results['train_losses'],
+            val_losses=results['val_losses'],
+            val_accuracies=results['val_accuracies'],
+            title="PV Detection Training Convergence (Spin-2)",
+            save_path=os.path.join(args.output_dir, 'pv_convergence.png')
         )
         
-        # Print multi-hop summary
-        print("\n" + "="*60)
-        print("MULTI-HOP EXPERIMENT SUMMARY")
-        print("="*60)
-        print(f"Test accuracy: {multi_hop_results['test_accuracy']:.4f}")
-        print(f"Best val accuracy: {multi_hop_results['best_val_accuracy']:.4f}")
-        print(f"Epochs trained: {multi_hop_results['epochs_trained']}")
+        plot_comparison(
+            pv_results=results,
+            control_results=control_results,
+            save_path=os.path.join(args.output_dir, 'pv_vs_control.png')
+        )
         
-        if multi_hop_results['test_accuracy'] > 0.55:
-            print("\n✓ Model shows ability to detect parity violation in multi-hop setting")
-        else:
-            print("\n⚠ Model performance may need tuning for multi-hop setting")
+        plt.close('all')
     
     # Final summary
     print("\n" + "="*60)
@@ -1367,12 +1323,10 @@ if __name__ == '__main__':
         else:
             print(f"\n✗ Cannot conclude parity violation at {args.confidence_level*100:.0f}% confidence level.")
     
-    # Validation check for full mode
+    # Validation check
     if args.mode == 'full' and results is not None and control_results is not None:
         print()
         if results['test_accuracy'] > 0.55 and control_results['test_accuracy'] < 0.55:
             print("✓ VALIDATION PASSED: Model correctly detects 3D parity violation")
-            print("  - Detects parity when present (α > 0)")
-            print("  - Returns ~0.5 accuracy for parity-symmetric control")
         else:
             print("⚠ VALIDATION INCONCLUSIVE: Check experiment parameters")

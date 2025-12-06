@@ -110,3 +110,12 @@ visualizations/
 
 # Grid search results
 grid_search_results/
+
+# Grid test results
+grid_test_results/
+
+# Threshold search results
+threshold_search_results/
+
+# Model comparison results
+comparison_results/

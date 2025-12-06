@@ -1,34 +1,49 @@
 """
-Model Comparison Script for 3D Parity Violation Detection.
+Model Comparison Experiment for 3D Parity Violation Detection.
 
-This script compares two model types:
+This experiment compares two model types:
 1. EGNN (original) - EGNN-like message passing classifier
 2. Frame-Aligned GNN - Frame-aligned message passing with latent slots
 
-The comparison is done with:
-- 10,000 training+validation points
-- f_pv = 0.05 (5% parity-violating pairs)
+The comparison is done with configurable parameters:
+- Number of training+validation points
+- f_pv (parity violation fraction)
+- Number of random seeds for averaging
 
 Usage:
-    python compare_models.py [--n-points N] [--f-pv F] [--n-seeds S]
+    python -m experiments.compare_models
+    python -m experiments.compare_models --n-points 10000 --f-pv 0.05 --n-seeds 3
 """
 
 import argparse
 import json
 import os
+import sys
 from datetime import datetime
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from train import (
-    run_experiment,
-    run_bootstrap_statistical_test,
-    MODEL_TYPE_EGNN,
-    MODEL_TYPE_FRAME_ALIGNED,
-    SEED_MULTIPLIER,
-)
+# Import from experiments package - works when running as a module (-m experiments.compare_models)
+try:
+    from experiments.basic_train import (
+        run_experiment,
+        run_bootstrap_statistical_test,
+        MODEL_TYPE_EGNN,
+        MODEL_TYPE_FRAME_ALIGNED,
+        SEED_MULTIPLIER,
+    )
+except ImportError:
+    # Fallback for direct script execution
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from experiments.basic_train import (
+        run_experiment,
+        run_bootstrap_statistical_test,
+        MODEL_TYPE_EGNN,
+        MODEL_TYPE_FRAME_ALIGNED,
+        SEED_MULTIPLIER,
+    )
 
 
 def compare_models(
@@ -49,6 +64,9 @@ def compare_models(
 ):
     """
     Compare EGNN and Frame-Aligned models on parity violation detection.
+    
+    This experiment uses BOTH model types to compare their performance,
+    unlike other experiments which default to Frame-Aligned only.
     
     Args:
         n_points: Total number of training + validation points
@@ -74,7 +92,7 @@ def compare_models(
     # Calculate train/val split (80/20)
     n_train = int(n_points * 0.8)
     n_val = n_points - n_train
-    n_test = n_points  # Same size for test
+    n_test = n_points
     
     print("="*70)
     print("Model Comparison: EGNN vs Frame-Aligned GNN")
@@ -120,7 +138,7 @@ def compare_models(
         'timestamp': datetime.now().isoformat()
     }
     
-    # Run experiments for each model type
+    # Run experiments for BOTH model types
     for model_type in [MODEL_TYPE_EGNN, MODEL_TYPE_FRAME_ALIGNED]:
         model_name = 'egnn' if model_type == MODEL_TYPE_EGNN else 'frame_aligned'
         print(f"\n{'='*70}")
@@ -200,7 +218,6 @@ def compare_models(
     # Save results
     results_path = os.path.join(output_dir, 'comparison_results.json')
     with open(results_path, 'w') as f:
-        # Convert non-serializable items
         save_results = {
             'config': results['config'],
             'egnn': {k: v for k, v in results['egnn'].items() if k != 'val_losses'},
