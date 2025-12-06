@@ -23,6 +23,8 @@ A new architecture where each node maintains its own local coordinate frame and 
 - Incorporates 3D distance, z-separation, and orientation features
 - Better performance on parity violation detection tasks
 
+**Default parameters:** num_slots=32, hidden_dim=64, num_hops=3
+
 ### 2. EGNN (Original)
 
 A minimal EGNN-like message-passing classifier with:
@@ -35,8 +37,13 @@ A minimal EGNN-like message-passing classifier with:
 ```
 multiplet_pv_egnn/
 ├── data.py                    # Dataset generation for 3D spin-2 objects
-├── model.py                   # Original EGNN model implementation
-├── frame_aligned_model.py     # Frame-Aligned GNN model implementation
+├── models/                    # Model implementations
+│   ├── __init__.py           # Package exports
+│   ├── model.py              # Original EGNN model implementation
+│   └── frame_aligned_model.py # Frame-Aligned GNN model implementation
+├── configs/                   # Configuration files
+│   ├── grid_test_config.yaml # Grid test configuration
+│   └── threshold_search_config.yaml # Threshold search configuration
 ├── experiments/               # All experiment scripts
 │   ├── basic_train.py        # Basic training with visualization
 │   ├── grid_test.py          # Grid test for detection capability analysis
@@ -87,11 +94,17 @@ Run parameter grid test for detection capability analysis:
 python -m experiments.grid_test
 
 # With custom config
-python -m experiments.grid_test --config grid_test_config.yaml
+python -m experiments.grid_test --config configs/grid_test_config.yaml
 
 # Generate plots from existing results
 python -m experiments.grid_test --plot-only grid_test_results/results.json
 ```
+
+Output includes:
+- Detection significance heatmap (confidence %)
+- Binary detection heatmap
+- Test accuracy heatmap
+- Combined heatmaps visualization
 
 ### Threshold Search
 
@@ -102,20 +115,25 @@ Find detection boundaries (minimum f_pv for detection at each dataset size):
 python -m experiments.threshold_search
 
 # With custom config
-python -m experiments.threshold_search --config threshold_config.yaml
+python -m experiments.threshold_search --config configs/threshold_search_config.yaml
 
 # Generate plot from existing results
 python -m experiments.threshold_search --plot-only threshold_search_results/boundary_results.json
 ```
+
+Output includes:
+- Detection boundary curve
+- Confidence heatmap (interpolated from binary search results)
+- Accuracy scatter plot
 
 ## Key Parameters
 
 - `f_pv`: Fraction of pairs that are parity-violating (0.0 to 1.0)
 - `alpha`: Parity violation angle offset (default 0.3 rad)
 - `model_type`: 'frame_aligned' (default) or 'egnn'
-- `hidden_dim`: Hidden dimension for the model
-- `num_slots`: Number of latent slots (for frame_aligned)
-- `num_hops`: Number of message passing hops (for frame_aligned)
+- `hidden_dim`: Hidden dimension for the model (default 64)
+- `num_slots`: Number of latent slots for frame_aligned (default 32)
+- `num_hops`: Number of message passing hops for frame_aligned (default 3)
 
 ## Expected Results
 

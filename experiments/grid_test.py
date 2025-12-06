@@ -71,10 +71,10 @@ DEFAULT_CONFIG = {
     # Model parameters - Default to Frame-Aligned model
     'model_type': DEFAULT_MODEL_TYPE,
     'alpha': 0.3,
-    'hidden_dim': 16,
+    'hidden_dim': 64,
     'n_layers': 2,
-    'num_slots': 8,
-    'num_hops': 2,
+    'num_slots': 32,
+    'num_hops': 3,
     
     # Training parameters
     'batch_size': 64,
@@ -175,8 +175,8 @@ def run_grid_test(config: dict) -> dict:
                     early_stopping_patience=config['early_stopping_patience'],
                     early_stopping_min_delta=config['early_stopping_min_delta'],
                     model_type=config.get('model_type', DEFAULT_MODEL_TYPE),
-                    num_slots=config.get('num_slots', 8),
-                    num_hops=config.get('num_hops', 2)
+                    num_slots=config.get('num_slots', 32),
+                    num_hops=config.get('num_hops', 3)
                 )
                 
                 grid_result = {
@@ -391,11 +391,118 @@ def plot_accuracy_heatmap(
     plt.close()
 
 
+def plot_combined_heatmaps(
+    results: dict,
+    output_dir: str,
+    figsize: tuple = (18, 6)
+):
+    """
+    Plot all three heatmaps side by side for easy comparison.
+    
+    Shows: Detection Confidence, Binary Detection, and Test Accuracy.
+    
+    Args:
+        results: Results dictionary with matrices
+        output_dir: Output directory for saving the plot
+        figsize: Figure size
+    """
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    
+    num_train_val = results['num_train_val']
+    f_pv_values = results['f_pv_values']
+    confidence_level = results['config'].get('confidence_level', 0.95) * 100
+    
+    # Plot 1: Detection Confidence
+    ax1 = axes[0]
+    matrix1 = results['detection_confidence_matrix'] * 100
+    im1 = ax1.imshow(matrix1, cmap='RdYlGn', aspect='auto', vmin=0, vmax=100)
+    cbar1 = plt.colorbar(im1, ax=ax1)
+    cbar1.set_label('Detection Confidence (%)', fontsize=10)
+    
+    ax1.set_xticks(range(len(f_pv_values)))
+    ax1.set_xticklabels([f'{v:.2f}' for v in f_pv_values], fontsize=8)
+    ax1.set_yticks(range(len(num_train_val)))
+    ax1.set_yticklabels([f'{v:,}' for v in num_train_val], fontsize=8)
+    ax1.set_xlabel('f_pv', fontsize=10)
+    ax1.set_ylabel('Train+Val Samples', fontsize=10)
+    ax1.set_title('Detection Confidence', fontsize=11)
+    
+    for i in range(len(num_train_val)):
+        for j in range(len(f_pv_values)):
+            value = matrix1[i, j]
+            if not np.isnan(value):
+                text_color = 'white' if value < 50 or value > 80 else 'black'
+                ax1.text(j, i, f'{value:.0f}%', ha='center', va='center',
+                       color=text_color, fontsize=7, fontweight='bold')
+    
+    # Plot 2: Binary Detection
+    ax2 = axes[1]
+    matrix2 = results['detection_binary_matrix']
+    colors = ['#d73027', '#1a9850']
+    cmap = mcolors.ListedColormap(colors)
+    bounds = [-0.5, 0.5, 1.5]
+    norm = mcolors.BoundaryNorm(bounds, cmap.N)
+    im2 = ax2.imshow(matrix2, cmap=cmap, norm=norm, aspect='auto')
+    cbar2 = plt.colorbar(im2, ax=ax2, ticks=[0, 1])
+    cbar2.set_ticklabels(['No', 'Yes'])
+    cbar2.set_label('Detected', fontsize=10)
+    
+    ax2.set_xticks(range(len(f_pv_values)))
+    ax2.set_xticklabels([f'{v:.2f}' for v in f_pv_values], fontsize=8)
+    ax2.set_yticks(range(len(num_train_val)))
+    ax2.set_yticklabels([f'{v:,}' for v in num_train_val], fontsize=8)
+    ax2.set_xlabel('f_pv', fontsize=10)
+    ax2.set_ylabel('Train+Val Samples', fontsize=10)
+    ax2.set_title(f'Binary Detection ({confidence_level:.0f}% CI)', fontsize=11)
+    
+    for i in range(len(num_train_val)):
+        for j in range(len(f_pv_values)):
+            value = matrix2[i, j]
+            if not np.isnan(value):
+                text = '✓' if value == 1 else '✗'
+                ax2.text(j, i, text, ha='center', va='center',
+                       color='white', fontsize=12, fontweight='bold')
+    
+    # Plot 3: Test Accuracy
+    ax3 = axes[2]
+    matrix3 = results['test_accuracy_matrix'] * 100
+    im3 = ax3.imshow(matrix3, cmap='viridis', aspect='auto', vmin=50, vmax=100)
+    cbar3 = plt.colorbar(im3, ax=ax3)
+    cbar3.set_label('Accuracy (%)', fontsize=10)
+    
+    ax3.set_xticks(range(len(f_pv_values)))
+    ax3.set_xticklabels([f'{v:.2f}' for v in f_pv_values], fontsize=8)
+    ax3.set_yticks(range(len(num_train_val)))
+    ax3.set_yticklabels([f'{v:,}' for v in num_train_val], fontsize=8)
+    ax3.set_xlabel('f_pv', fontsize=10)
+    ax3.set_ylabel('Train+Val Samples', fontsize=10)
+    ax3.set_title('Test Accuracy', fontsize=11)
+    
+    for i in range(len(num_train_val)):
+        for j in range(len(f_pv_values)):
+            value = matrix3[i, j]
+            if not np.isnan(value):
+                text_color = 'white' if value < 70 else 'black'
+                ax3.text(j, i, f'{value:.0f}%', ha='center', va='center',
+                       color=text_color, fontsize=7, fontweight='bold')
+    
+    plt.suptitle('Grid Test Results: Detection Capability vs Data Amount & Signal Strength', fontsize=14)
+    plt.tight_layout()
+    
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, 'combined_heatmaps.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"Saved combined heatmaps to {output_path}")
+    
+    plt.close()
+
+
 def generate_plots(results: dict, output_dir: str):
     """Generate all heatmap plots from results."""
     plot_detection_significance_heatmap(results, output_dir)
     plot_detection_binary_heatmap(results, output_dir)
     plot_accuracy_heatmap(results, output_dir)
+    plot_combined_heatmaps(results, output_dir)
     print(f"\nAll plots saved to {output_dir}")
 
 
@@ -484,3 +591,4 @@ if __name__ == '__main__':
     print(f"  - detection_significance_heatmap.png")
     print(f"  - detection_binary_heatmap.png")
     print(f"  - test_accuracy_heatmap.png")
+    print(f"  - combined_heatmaps.png")

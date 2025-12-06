@@ -33,14 +33,14 @@ from torch.utils.data import DataLoader
 # or when the parent directory is in PYTHONPATH
 try:
     from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
-    from model import ParityViolationEGNN, MultiHopParityViolationEGNN
-    from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
+    from models.model import ParityViolationEGNN, MultiHopParityViolationEGNN
+    from models.frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
 except ImportError:
     # Fallback for direct script execution
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
-    from model import ParityViolationEGNN, MultiHopParityViolationEGNN
-    from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
+    from models.model import ParityViolationEGNN, MultiHopParityViolationEGNN
+    from models.frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
 
 
 # Model type constants
@@ -1112,13 +1112,13 @@ def parse_args():
                         choices=[MODEL_TYPE_EGNN, MODEL_TYPE_FRAME_ALIGNED,
                                  MODEL_TYPE_MULTI_HOP_EGNN, MODEL_TYPE_MULTI_HOP_FRAME_ALIGNED],
                         help='Model type')
-    parser.add_argument('--hidden-dim', type=int, default=16,
+    parser.add_argument('--hidden-dim', type=int, default=64,
                         help='Hidden dimension for the model')
     parser.add_argument('--n-layers', type=int, default=2,
                         help='Number of message passing layers (for egnn)')
-    parser.add_argument('--num-slots', type=int, default=8,
+    parser.add_argument('--num-slots', type=int, default=32,
                         help='Number of latent slots (for frame_aligned)')
-    parser.add_argument('--num-hops', type=int, default=2,
+    parser.add_argument('--num-hops', type=int, default=3,
                         help='Number of message passing hops (for frame_aligned)')
     
     # Training parameters
