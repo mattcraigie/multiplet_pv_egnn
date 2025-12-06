@@ -25,16 +25,25 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from experiments.basic_train import (
-    run_experiment,
-    run_bootstrap_statistical_test,
-    MODEL_TYPE_EGNN,
-    MODEL_TYPE_FRAME_ALIGNED,
-    SEED_MULTIPLIER,
-)
+# Import from experiments package - works when running as a module (-m experiments.compare_models)
+try:
+    from experiments.basic_train import (
+        run_experiment,
+        run_bootstrap_statistical_test,
+        MODEL_TYPE_EGNN,
+        MODEL_TYPE_FRAME_ALIGNED,
+        SEED_MULTIPLIER,
+    )
+except ImportError:
+    # Fallback for direct script execution
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from experiments.basic_train import (
+        run_experiment,
+        run_bootstrap_statistical_test,
+        MODEL_TYPE_EGNN,
+        MODEL_TYPE_FRAME_ALIGNED,
+        SEED_MULTIPLIER,
+    )
 
 
 def compare_models(

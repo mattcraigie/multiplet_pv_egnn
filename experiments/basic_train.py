@@ -29,12 +29,18 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
-from model import ParityViolationEGNN, MultiHopParityViolationEGNN
-from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
+# Import from parent package - these work when running as a module (-m experiments.basic_train)
+# or when the parent directory is in PYTHONPATH
+try:
+    from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
+    from model import ParityViolationEGNN, MultiHopParityViolationEGNN
+    from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
+except ImportError:
+    # Fallback for direct script execution
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from data import ParityViolationDataset, ParitySymmetricDataset, MultiHopParityViolationDataset
+    from model import ParityViolationEGNN, MultiHopParityViolationEGNN
+    from frame_aligned_model import FrameAlignedPVClassifier, MultiHopFrameAlignedPVClassifier
 
 
 # Model type constants

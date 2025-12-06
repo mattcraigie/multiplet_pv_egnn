@@ -29,14 +29,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from experiments.basic_train import (
-    run_bootstrap_statistical_test,
-    DEFAULT_MODEL_TYPE,
-    MODEL_TYPE_FRAME_ALIGNED,
-)
+# Import from experiments package - works when running as a module (-m experiments.threshold_search)
+try:
+    from experiments.basic_train import (
+        run_bootstrap_statistical_test,
+        DEFAULT_MODEL_TYPE,
+        MODEL_TYPE_FRAME_ALIGNED,
+    )
+except ImportError:
+    # Fallback for direct script execution
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from experiments.basic_train import (
+        run_bootstrap_statistical_test,
+        DEFAULT_MODEL_TYPE,
+        MODEL_TYPE_FRAME_ALIGNED,
+    )
 
 
 # Default configuration
