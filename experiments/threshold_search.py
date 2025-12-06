@@ -353,12 +353,15 @@ def plot_boundary_curve(
     x_valid = num_train_val[valid_mask]
     y_valid = f_pv_boundary[valid_mask]
     
+    # Get the y-axis limit from the f_pv_max in results
+    f_pv_max = results.get('f_pv_range', (0.01, 0.2))[1]
+    
     # Plot boundary curve
     if len(x_valid) > 0:
         ax.plot(x_valid, y_valid, 'b-o', linewidth=2, markersize=8, label='Detection Boundary')
         
-        # Fill regions
-        ax.fill_between(x_valid, y_valid, 1.0, alpha=0.3, color='green', label='Detected Region')
+        # Fill regions (use f_pv_max as upper bound)
+        ax.fill_between(x_valid, y_valid, f_pv_max, alpha=0.3, color='green', label='Detected Region')
         ax.fill_between(x_valid, 0, y_valid, alpha=0.3, color='red', label='Not Detected Region')
     
     # Mark points where boundary was not found
@@ -376,7 +379,8 @@ def plot_boundary_curve(
     ax.set_title('Detection Boundary: Minimum f_pv for Detection\n'
                  '(What parity strength can my model detect with X samples?)', fontsize=14)
     
-    ax.set_ylim([0, 1.05])
+    # Set y-axis limit to match f_pv_max from config
+    ax.set_ylim([0, f_pv_max * 1.05])
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper right', fontsize=10)
     
